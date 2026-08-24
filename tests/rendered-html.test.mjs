@@ -86,8 +86,11 @@ test("renders the quiet drawing surface with the supplied typeface", async () =>
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const client = await readFile(new URL("../app/Scribble.tsx", import.meta.url), "utf8");
   assert.match(css, /Futura-Regular\.woff2/);
   assert.match(css, /Futura-Bold\.woff2/);
+  assert.match(client, /const MIN_STROKE_TRAVEL = 8;/);
+  assert.doesNotMatch(client, /failedAttempts|previousEnd|mark--rejected/);
   await access(new URL("../public/fonts/Futura-Regular.woff2", import.meta.url));
   await access(new URL("../public/fonts/Futura-Bold.woff2", import.meta.url));
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));

@@ -138,10 +138,6 @@ button {
   vector-effect: non-scaling-stroke;
 }
 
-.mark--rejected {
-  animation: retreat 440ms ease-out both;
-}
-
 @keyframes appear {
   from {
     opacity: 0;
@@ -153,15 +149,6 @@ button {
   }
 }
 
-@keyframes retreat {
-  from {
-    opacity: 0.46;
-  }
-  to {
-    opacity: 0;
-  }
-}
-
 @media (max-width: 600px) {
   .instruction {
     max-width: calc(100vw - 96px);
@@ -169,8 +156,7 @@ button {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .instruction__text,
-  .mark--rejected {
+  .instruction__text {
     animation-duration: 1ms;
   }
 }

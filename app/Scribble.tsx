@@ -22,6 +22,7 @@ const WIDTH = 1000;
 const HEIGHT = 700;
 const LAST_PROMPT = 4;
 const MIN_POINT_GAP = 2.5;
+const MIN_STROKE_TRAVEL = 8;
 
 const prompts = [
   "Begin high and to the right. Travel left.",
@@ -63,52 +64,8 @@ function pathFromPoints(points: Point[]) {
   return `${path} L ${last.x.toFixed(1)} ${last.y.toFixed(1)}`;
 }
 
-function isAccepted(
-  points: Point[],
-  promptIndex: number,
-  previousEnd: Point | undefined,
-  failedAttempts: number,
-) {
-  if (points.length < 2) return false;
-
-  const first = points[0];
-  const last = points[points.length - 1];
-  const dx = last.x - first.x;
-  const dy = last.y - first.y;
-  const travel = lengthOf(points);
-
-  if (travel < 70) return false;
-  if (failedAttempts >= 2 && travel >= 110) return true;
-
-  const joins = !previousEnd || distance(first, previousEnd) <= 125;
-  if (!joins) return false;
-
-  if (promptIndex === 0) {
-    const matches = [
-      first.y < HEIGHT * 0.46,
-      first.x > WIDTH * 0.48,
-      dx < -WIDTH * 0.1,
-      Math.abs(dy) < Math.abs(dx) * 0.8,
-    ].filter(Boolean).length;
-    return matches >= 3;
-  }
-
-  if (promptIndex === 1) {
-    return dy > HEIGHT * 0.1 && Math.abs(dx) < Math.abs(dy) * 0.85;
-  }
-
-  if (promptIndex === 2) {
-    return dx > WIDTH * 0.09 && Math.abs(dy) < Math.abs(dx) * 0.9;
-  }
-
-  if (promptIndex === 3) {
-    const xs = points.map((point) => point.x);
-    const spread = Math.max(...xs) - Math.min(...xs);
-    const direct = Math.max(distance(first, last), 1);
-    return dy > HEIGHT * 0.08 && (spread > WIDTH * 0.04 || travel / direct > 1.08);
-  }
-
-  return dx < -WIDTH * 0.08 && first.y > HEIGHT * 0.42;
+function isAccepted(points: Point[]) {
+  return points.length >= 2 && lengthOf(points) >= MIN_STROKE_TRAVEL;
 }
 
 function roundedPoints(points: Point[]) {
@@ -122,16 +79,13 @@ export default function Scribble() {
   const [promptIndex, setPromptIndex] = useState(0);
   const [strokes, setStrokes] = useState<Point[][]>([]);
   const [activeStroke, setActiveStroke] = useState<Point[]>([]);
-  const [rejectedStroke, setRejectedStroke] = useState<Point[] | null>(null);
   const [status, setStatus] = useState<DrawStatus>("ready");
 
   const surfaceRef = useRef<SVGSVGElement>(null);
   const activeRef = useRef<Point[]>([]);
   const activePointerRef = useRef<number | null>(null);
-  const attemptsRef = useRef([0, 0, 0, 0, 0]);
   const sessionRef = useRef("");
   const transitionTimerRef = useRef<number | null>(null);
-  const rejectTimerRef = useRef<number | null>(null);
   const unsavedRef = useRef<Point[][] | null>(null);
   const keyboardDrawingRef = useRef(false);
 
@@ -144,10 +98,6 @@ export default function Scribble() {
     if (transitionTimerRef.current !== null) {
       window.clearTimeout(transitionTimerRef.current);
       transitionTimerRef.current = null;
-    }
-    if (rejectTimerRef.current !== null) {
-      window.clearTimeout(rejectTimerRef.current);
-      rejectTimerRef.current = null;
     }
   }, []);
 
@@ -183,25 +133,8 @@ export default function Scribble() {
       setCurrentStroke([]);
       keyboardDrawingRef.current = false;
 
-      const previous = strokes.at(-1)?.at(-1);
-      const accepted = isAccepted(
-        cleaned,
-        promptIndex,
-        previous,
-        attemptsRef.current[promptIndex],
-      );
-
-      if (!accepted) {
-        attemptsRef.current[promptIndex] += 1;
-        setRejectedStroke(cleaned);
+      if (!isAccepted(cleaned)) {
         setStatus("ready");
-        if (rejectTimerRef.current !== null) {
-          window.clearTimeout(rejectTimerRef.current);
-        }
-        rejectTimerRef.current = window.setTimeout(() => {
-          setRejectedStroke(null);
-          rejectTimerRef.current = null;
-        }, 440);
         return;
       }
 
@@ -340,13 +273,11 @@ export default function Scribble() {
   const reset = () => {
     clearTimers();
     activePointerRef.current = null;
-    attemptsRef.current = [0, 0, 0, 0, 0];
     sessionRef.current = "";
     unsavedRef.current = null;
     keyboardDrawingRef.current = false;
     setPromptIndex(0);
     setStrokes([]);
-    setRejectedStroke(null);
     setCurrentStroke([]);
     setStatus("ready");
   };
@@ -414,9 +345,6 @@ export default function Scribble() {
         ))}
         {activeStroke.length > 1 ? (
           <path className="mark" d={pathFromPoints(activeStroke)} />
-        ) : null}
-        {rejectedStroke && rejectedStroke.length > 1 ? (
-          <path className="mark mark--rejected" d={pathFromPoints(rejectedStroke)} />
         ) : null}
       </svg>
     </main>
