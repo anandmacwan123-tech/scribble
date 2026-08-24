@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "scribble",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2026-05-22",
+  "assets": {
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "scribble-db",
+      "database_id": "cc3cfae1-17fe-4485-acca-d2085da5c39a",
+      "migrations_dir": "./migrations"
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}
