@@ -8,17 +8,18 @@ import {
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import {
+  CANVAS_HEIGHT as HEIGHT,
+  CANVAS_WIDTH as WIDTH,
+  MIN_POINT_GAP,
+  distance,
+  hasReachedPrompt,
+  isAccepted,
+  type Point,
+} from "./gesture";
 
-type Point = { x: number; y: number };
 type DrawStatus = "ready" | "drawing" | "saving" | "saved" | "error";
 type StrokeResult = "ignored" | "advanced" | "complete";
-
-const WIDTH = 1000;
-const HEIGHT = 700;
-const MIN_POINT_GAP = 2.5;
-const MIN_STROKE_TRAVEL = 8;
-const AUTO_ADVANCE_TRAVEL = 96;
-const IDLE_ADVANCE_MS = 180;
 
 const prompts = [
   "Begin high and to the right. Travel left.",
@@ -30,18 +31,6 @@ const prompts = [
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
-}
-
-function distance(a: Point, b: Point) {
-  return Math.hypot(b.x - a.x, b.y - a.y);
-}
-
-function lengthOf(points: Point[]) {
-  let length = 0;
-  for (let index = 1; index < points.length; index += 1) {
-    length += distance(points[index - 1], points[index]);
-  }
-  return length;
 }
 
 function pathFromPoints(points: Point[]) {
@@ -58,10 +47,6 @@ function pathFromPoints(points: Point[]) {
 
   const last = points[points.length - 1];
   return `${path} L ${last.x.toFixed(1)} ${last.y.toFixed(1)}`;
-}
-
-function isAccepted(points: Point[]) {
-  return points.length >= 2 && lengthOf(points) >= MIN_STROKE_TRAVEL;
 }
 
 function roundedPoints(points: Point[]) {
@@ -82,7 +67,6 @@ export default function Scribble() {
   const activePointerRef = useRef<number | null>(null);
   const strokesRef = useRef<Point[][]>([]);
   const sessionRef = useRef("");
-  const idleTimerRef = useRef<number | null>(null);
   const saveControllerRef = useRef<AbortController | null>(null);
   const unsavedRef = useRef<Point[][] | null>(null);
   const keyboardDrawingRef = useRef(false);
@@ -92,19 +76,11 @@ export default function Scribble() {
     setActiveStroke(points);
   }, []);
 
-  const clearIdleTimer = useCallback(() => {
-    if (idleTimerRef.current !== null) {
-      window.clearTimeout(idleTimerRef.current);
-      idleTimerRef.current = null;
-    }
-  }, []);
-
   useEffect(
     () => () => {
-      clearIdleTimer();
       saveControllerRef.current?.abort();
     },
-    [clearIdleTimer],
+    [],
   );
 
   const save = useCallback(async (nextStrokes: Point[][]) => {
@@ -145,7 +121,6 @@ export default function Scribble() {
 
   const finishStroke = useCallback(
     (points: Point[], keepDrawing = false): StrokeResult => {
-      clearIdleTimer();
       const cleaned = roundedPoints(points);
 
       if (!isAccepted(cleaned)) {
@@ -189,7 +164,7 @@ export default function Scribble() {
       }
       return "advanced";
     },
-    [clearIdleTimer, save, setCurrentStroke],
+    [save, setCurrentStroke],
   );
 
   const pointFromClient = useCallback((clientX: number, clientY: number) => {
@@ -210,24 +185,22 @@ export default function Scribble() {
       const current = activeRef.current;
       const last = current.at(-1);
       if (last && distance(last, point) < MIN_POINT_GAP) return "drawing";
-      clearIdleTimer();
-      if (current.length >= 900) return finishStroke(current, true);
 
-      const nextPoints = [...current, point];
+      const retainedPoints =
+        current.length >= 900
+          ? current.filter(
+              (_, index) => index % 2 === 0 || index === current.length - 1,
+            )
+          : current;
+      const nextPoints = [...retainedPoints, point];
       setCurrentStroke(nextPoints);
-      if (lengthOf(nextPoints) >= AUTO_ADVANCE_TRAVEL) {
+      const promptIndex = strokesRef.current.length;
+      if (hasReachedPrompt(nextPoints, promptIndex)) {
         return finishStroke(nextPoints, true);
-      }
-
-      if (isAccepted(nextPoints)) {
-        idleTimerRef.current = window.setTimeout(() => {
-          idleTimerRef.current = null;
-          finishStroke(activeRef.current, true);
-        }, IDLE_ADVANCE_MS);
       }
       return "drawing";
     },
-    [clearIdleTimer, finishStroke, setCurrentStroke],
+    [finishStroke, setCurrentStroke],
   );
 
   const canBegin = status === "ready";
@@ -239,7 +212,6 @@ export default function Scribble() {
     if (!point) return;
 
     event.preventDefault();
-    clearIdleTimer();
     activePointerRef.current = event.pointerId;
     event.currentTarget.setPointerCapture(event.pointerId);
     setCurrentStroke([point]);
@@ -262,7 +234,6 @@ export default function Scribble() {
         }
         break;
       }
-      if (result === "advanced") break;
     }
   };
 
@@ -271,18 +242,23 @@ export default function Scribble() {
     event.preventDefault();
 
     const point = pointFromClient(event.clientX, event.clientY);
-    const points = point ? [...activeRef.current, point] : activeRef.current;
+    const last = activeRef.current.at(-1);
+    const points =
+      point && (!last || distance(last, point) >= MIN_POINT_GAP)
+        ? [...activeRef.current, point]
+        : activeRef.current;
 
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     activePointerRef.current = null;
+    // Lifting remains a permissive fallback for separate strokes. While the
+    // pointer stays down, prompt-aware progression happens in appendPoint.
     finishStroke(points);
   };
 
   const cancelPointer = (event: ReactPointerEvent<SVGSVGElement>) => {
     if (event.pointerId !== activePointerRef.current) return;
-    clearIdleTimer();
     activePointerRef.current = null;
     setCurrentStroke([]);
     setStatus("ready");
@@ -291,7 +267,6 @@ export default function Scribble() {
   const handleKeyDown = (event: KeyboardEvent<SVGSVGElement>) => {
     if (event.key === "Escape" && keyboardDrawingRef.current) {
       event.preventDefault();
-      clearIdleTimer();
       keyboardDrawingRef.current = false;
       setCurrentStroke([]);
       setStatus("ready");
@@ -301,6 +276,7 @@ export default function Scribble() {
     if (event.key === "Enter") {
       event.preventDefault();
       if (keyboardDrawingRef.current) {
+        // Enter mirrors the pointer-up fallback for keyboard drawing.
         finishStroke(activeRef.current);
       } else if (canBegin) {
         const previous = strokes.at(-1)?.at(-1);
@@ -333,7 +309,6 @@ export default function Scribble() {
   };
 
   const reset = () => {
-    clearIdleTimer();
     saveControllerRef.current?.abort();
     saveControllerRef.current = null;
     activePointerRef.current = null;

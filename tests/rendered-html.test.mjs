@@ -59,8 +59,8 @@ function makeEnv({ onRun = () => {}, onAll, onFirst, onLimit } = {}) {
 function drawingPayload() {
   return {
     id: "11111111-1111-4111-8111-111111111111",
-    width: 1000,
-    height: 700,
+    width: 842,
+    height: 595,
     strokes: [
       [
         { x: 800, y: 120 },
@@ -104,15 +104,19 @@ test("renders the quiet drawing surface with the supplied typeface", async () =>
 
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   const client = await readFile(new URL("../app/Scribble.tsx", import.meta.url), "utf8");
+  const gesture = await readFile(new URL("../app/gesture.ts", import.meta.url), "utf8");
   const gallery = await readFile(new URL("../app/5/Gallery.tsx", import.meta.url), "utf8");
   assert.match(css, /Futura-Regular\.woff2/);
   assert.doesNotMatch(css, /Futura-Bold\.woff2|font-weight:\s*(?:[5-9]00|bold)/);
-  assert.match(client, /const MIN_STROKE_TRAVEL = 8;/);
-  assert.match(client, /const AUTO_ADVANCE_TRAVEL = 96;/);
-  assert.match(client, /finishStroke\(activeRef\.current, true\)/);
+  assert.match(css, /\.instruction\s*{[^}]*bottom:[^}]*left:\s*50%[^}]*text-align:\s*center/s);
+  assert.match(css, /aspect-ratio:\s*842\s*\/\s*595/);
+  assert.match(gesture, /MIN_STROKE_TRAVEL = 8/);
+  assert.match(gesture, /function hasReachedPrompt/);
+  assert.doesNotMatch(client, /AUTO_ADVANCE_TRAVEL|IDLE_ADVANCE_MS/);
   assert.match(client, /saveControllerRef\.current\?\.abort\(\)/);
-  assert.match(gallery, /const MAX_SELECTION = 50;/);
-  assert.doesNotMatch(gallery, /toggleAll|allSelected/);
+  assert.match(gallery, /const MAX_BULK_SELECTION = 500;/);
+  assert.match(gallery, /toggleAll|allSelected/);
+  assert.match(gallery, /while \(cursor\)/);
   assert.doesNotMatch(client, /failedAttempts|previousEnd|mark--rejected/);
   await access(new URL("../public/fonts/Futura-Regular.woff2", import.meta.url));
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
@@ -157,7 +161,14 @@ test("constructs canonical SVG on the server and writes it to D1", async () => {
   assert.doesNotMatch(write.sql, /DO UPDATE/);
   assert.equal(write.values[0], drawingPayload().id);
   assert.match(write.values[1], /^<svg xmlns=/);
-  assert.equal((write.values[1].match(/<path /g) ?? []).length, 5);
+  assert.match(write.values[1], /width="842pt"/);
+  assert.match(write.values[1], /height="595pt"/);
+  assert.match(write.values[1], /viewBox="0 0 842 595"/);
+  assert.match(write.values[1], /stroke-width="1"/);
+  assert.equal((write.values[1].match(/<path /g) ?? []).length, 1);
+  assert.equal((write.values[1].match(/\bM /g) ?? []).length, 5);
+  assert.equal(write.values[2], 842);
+  assert.equal(write.values[3], 595);
   assert.doesNotMatch(write.values[1], /<script|onload=/i);
 });
 
@@ -278,9 +289,12 @@ test("downloads selected drawings as a ZIP", async () => {
   const second = "11111111-2222-4222-8222-222222222222";
   const rows = [first, second].map((id, index) => ({
     id,
-    svg: `<svg xmlns="http://www.w3.org/2000/svg"><title>${index}</title></svg>`,
-    width: 1000,
-    height: 700,
+    svg:
+      index === 0
+        ? '<svg xmlns="http://www.w3.org/2000/svg"><path d="M 700 100 L 620 100 M 620 100 L 620 165"/></svg>'
+        : '<svg xmlns="http://www.w3.org/2000/svg"><path d="M 800 120 L 500 120"/><path d="M 500 120 L 500 320"/></svg>',
+    width: index === 0 ? 842 : 1000,
+    height: index === 0 ? 595 : 700,
     created_at: 1_787_558_400,
     updated_at: 1_787_558_400,
   }));
@@ -301,10 +315,41 @@ test("downloads selected drawings as a ZIP", async () => {
   assert.equal(Object.keys(files).length, 2);
   assert.ok(Object.keys(files).some((name) => name.includes(first)));
   assert.ok(Object.keys(files).some((name) => name.includes(second)));
-  assert.deepEqual(
-    Object.values(files).map((contents) => strFromU8(contents)).sort(),
-    rows.map((row) => row.svg).sort(),
+  for (const contents of Object.values(files)) {
+    const svg = strFromU8(contents);
+    assert.match(svg, /width="842pt"/);
+    assert.match(svg, /height="595pt"/);
+    assert.match(svg, /viewBox="0 0 842 595"/);
+    assert.match(svg, /stroke-width="1"/);
+    assert.equal((svg.match(/<path /g) ?? []).length, 1);
+  }
+});
+
+test("rate limits bulk archives before querying D1", async () => {
+  const worker = await loadWorker();
+  let reads = 0;
+  const response = await worker.fetch(
+    new Request("http://localhost/api/drawings/download", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "cf-connecting-ip": "203.0.113.9",
+      },
+      body: JSON.stringify({ ids: [drawingPayload().id] }),
+    }),
+    makeEnv({
+      onLimit: async () => false,
+      onAll: async () => {
+        reads += 1;
+        return [];
+      },
+    }),
+    executionContext(),
   );
+
+  assert.equal(response.status, 429);
+  assert.equal(response.headers.get("retry-after"), "60");
+  assert.equal(reads, 0);
 });
 
 test("rejects malformed gallery cursors and selections", async () => {

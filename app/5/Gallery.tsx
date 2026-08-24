@@ -13,7 +13,7 @@ type DrawingPage = {
   nextCursor: string | null;
 };
 
-const MAX_SELECTION = 50;
+const MAX_BULK_SELECTION = 500;
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -34,53 +34,68 @@ export default function Gallery() {
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [downloadFailed, setDownloadFailed] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
 
-    void loadPage(null, controller.signal)
-      .then((page) => {
-        setDrawings(page.drawings);
-        setNextCursor(page.nextCursor);
+    void (async () => {
+      const loaded = new Map<string, Drawing>();
+      const visitedCursors = new Set<string>();
+      let cursor: string | null = null;
+
+      do {
+        const page = await loadPage(cursor, controller.signal);
+        for (const drawing of page.drawings) loaded.set(drawing.id, drawing);
+        setDrawings([...loaded.values()]);
+
+        cursor = page.nextCursor;
+        if (cursor && visitedCursors.has(cursor)) {
+          throw new Error("repeated cursor");
+        }
+        if (cursor) visitedCursors.add(cursor);
+      } while (cursor);
+
+      if (!controller.signal.aborted) {
         setStatus("ready");
-      })
-      .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") return;
-        setStatus("error");
-      });
+      }
+    })().catch((error: unknown) => {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setStatus("error");
+    });
 
     return () => controller.abort();
   }, []);
 
-  const loadMore = async () => {
-    if (!nextCursor || loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const page = await loadPage(nextCursor);
-      setDrawings((current) => [...current, ...page.drawings]);
-      setNextCursor(page.nextCursor);
-      setStatus("ready");
-    } catch {
-      setStatus("error");
-    } finally {
-      setLoadingMore(false);
-    }
-  };
-
-  const selectedIds = useMemo(() => [...selected], [selected]);
-  const selectionFull = selected.size >= MAX_SELECTION;
+  const selectedIds = useMemo(
+    () => drawings.filter(({ id }) => selected.has(id)).map(({ id }) => id),
+    [drawings, selected],
+  );
+  const allSelected =
+    drawings.length > 0 &&
+    selectedIds.length === Math.min(drawings.length, MAX_BULK_SELECTION);
+  const selectionFull = selectedIds.length >= MAX_BULK_SELECTION;
 
   const toggle = (id: string) => {
     setSelected((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
-      else if (next.size < MAX_SELECTION) next.add(id);
+      else if (next.size < MAX_BULK_SELECTION) next.add(id);
       return next;
     });
+  };
+
+  const toggleAll = () => {
+    setSelected(
+      allSelected
+        ? new Set()
+        : new Set(
+            drawings
+              .slice(0, MAX_BULK_SELECTION)
+              .map(({ id }) => id),
+          ),
+    );
   };
 
   const download = async () => {
@@ -114,7 +129,7 @@ export default function Gallery() {
   return (
     <main
       className="gallery-page"
-      aria-busy={status === "loading" || loadingMore || downloading}
+      aria-busy={status === "loading" || downloading}
     >
       <nav className="gallery-nav" aria-label="Gallery controls">
         {/* A plain document navigation avoids retaining gallery selection state. */}
@@ -126,7 +141,23 @@ export default function Gallery() {
           <button
             className="gallery-control"
             type="button"
-            disabled={selectedIds.length === 0 || downloading}
+            disabled={
+              status !== "ready" || drawings.length === 0 || downloading
+            }
+            onClick={toggleAll}
+          >
+            {allSelected
+              ? "clear"
+              : drawings.length > MAX_BULK_SELECTION
+                ? `select ${MAX_BULK_SELECTION}`
+                : "select all"}
+          </button>
+          <button
+            className="gallery-control"
+            type="button"
+            disabled={
+              status !== "ready" || selectedIds.length === 0 || downloading
+            }
             onClick={download}
           >
             {downloading
@@ -150,6 +181,9 @@ export default function Gallery() {
       ) : null}
       {downloadFailed ? (
         <p className="gallery-state">couldn’t prepare.</p>
+      ) : null}
+      {status === "ready" && drawings.length > MAX_BULK_SELECTION ? (
+        <p className="gallery-state">{MAX_BULK_SELECTION} per download.</p>
       ) : null}
       {status === "ready" && drawings.length === 0 ? (
         <p className="gallery-state">nothing yet.</p>
@@ -192,19 +226,6 @@ export default function Gallery() {
             );
           })}
         </ul>
-      ) : null}
-
-      {nextCursor ? (
-        <div className="gallery-more">
-          <button
-            className="gallery-control"
-            type="button"
-            disabled={loadingMore}
-            onClick={loadMore}
-          >
-            {loadingMore ? "loading…" : "more"}
-          </button>
-        </div>
       ) : null}
     </main>
   );

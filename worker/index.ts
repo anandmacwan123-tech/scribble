@@ -1,5 +1,5 @@
 import handler from "vinext/server/app-router-entry";
-import { strToU8, zipSync } from "fflate";
+import { zipSync } from "fflate";
 import {
   findDrawingById,
   findDrawingsByIds,
@@ -17,13 +17,16 @@ type DrawingPayload = {
   strokes: Point[][];
 };
 
-const WIDTH = 1000;
-const HEIGHT = 700;
+const A4_WIDTH = 842;
+const A4_HEIGHT = 595;
+const LEGACY_WIDTH = 1000;
+const LEGACY_HEIGHT = 700;
 const MAX_BODY_BYTES = 128 * 1024;
-const MAX_POINTS = 3200;
+// The client retains at most 900 samples for each of the five prompt stages.
+const MAX_POINTS = 4500;
 const LIST_PAGE_SIZE = 100;
-const MAX_DOWNLOADS = 50;
-const MAX_ARCHIVE_INPUT_BYTES = 1024 * 1024;
+const MAX_DOWNLOADS = 500;
+const MAX_ARCHIVE_INPUT_BYTES = 8 * 1024 * 1024;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -91,9 +94,14 @@ function validatePayload(value: unknown): DrawingPayload {
   if (typeof value.id !== "string" || !UUID_PATTERN.test(value.id)) {
     throw new RequestError("invalid drawing", 400);
   }
-  if (value.width !== WIDTH || value.height !== HEIGHT) {
+  const usesA4Canvas = value.width === A4_WIDTH && value.height === A4_HEIGHT;
+  const usesLegacyCanvas =
+    value.width === LEGACY_WIDTH && value.height === LEGACY_HEIGHT;
+  if (!usesA4Canvas && !usesLegacyCanvas) {
     throw new RequestError("invalid drawing", 400);
   }
+  const width = value.width as number;
+  const height = value.height as number;
   if (!Array.isArray(value.strokes) || value.strokes.length !== 5) {
     throw new RequestError("invalid drawing", 400);
   }
@@ -116,9 +124,9 @@ function validatePayload(value: unknown): DrawingPayload {
         !Number.isFinite(x) ||
         !Number.isFinite(y) ||
         x < 0 ||
-        x > WIDTH ||
+        x > width ||
         y < 0 ||
-        y > HEIGHT
+        y > height
       ) {
         throw new RequestError("invalid drawing", 400);
       }
@@ -126,7 +134,12 @@ function validatePayload(value: unknown): DrawingPayload {
     });
   });
 
-  return { id: value.id, width: WIDTH, height: HEIGHT, strokes };
+  return {
+    id: value.id,
+    width,
+    height,
+    strokes,
+  };
 }
 
 function validateDownload(value: unknown) {
@@ -172,8 +185,38 @@ function drawingName(drawing: DrawingMetadataRow) {
   return `${timestamp}_${drawing.id}.svg`;
 }
 
+function fixed(value: number) {
+  const rounded = Math.abs(value) < 0.0005 ? 0 : value;
+  return rounded.toFixed(3).replace(/\.?0+$/, "");
+}
+
+function placementOnA4(width: number, height: number) {
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    throw new RequestError("invalid stored drawing", 500);
+  }
+
+  const scale = Math.min(A4_WIDTH / width, A4_HEIGHT / height);
+  return {
+    scale,
+    offsetX: (A4_WIDTH - width * scale) / 2,
+    offsetY: (A4_HEIGHT - height * scale) / 2,
+  };
+}
+
+function placePointsOnA4(points: Point[], width: number, height: number) {
+  const { scale, offsetX, offsetY } = placementOnA4(width, height);
+  return points.map(({ x, y }) => ({
+    x: x * scale + offsetX,
+    y: y * scale + offsetY,
+  }));
+}
+
 function pathFromPoints(points: Point[]) {
-  const fixed = (value: number) => value.toFixed(1);
   let path = `M ${fixed(points[0].x)} ${fixed(points[0].y)}`;
 
   for (let index = 1; index < points.length - 1; index += 1) {
@@ -186,15 +229,62 @@ function pathFromPoints(points: Point[]) {
   return `${path} L ${fixed(last.x)} ${fixed(last.y)}`;
 }
 
-function buildSvg(payload: DrawingPayload) {
-  const paths = payload.strokes
-    .map(
-      (stroke) =>
-        `<path d="${pathFromPoints(stroke)}" fill="none" stroke="#171713" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>`,
-    )
-    .join("");
+function buildA4Svg(paths: string[]) {
+  const compoundPath = paths.join(" ");
+  const element = `<path d="${compoundPath}" fill="none" stroke="#171713" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>`;
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 ${WIDTH} ${HEIGHT}"><title>Untitled gesture</title>${paths}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${A4_WIDTH}pt" height="${A4_HEIGHT}pt" viewBox="0 0 ${A4_WIDTH} ${A4_HEIGHT}"><title>Kept five</title>${element}</svg>`;
+}
+
+function buildSvg(payload: DrawingPayload) {
+  return buildA4Svg(
+    payload.strokes.map((stroke) =>
+      pathFromPoints(
+        placePointsOnA4(stroke, payload.width, payload.height),
+      ),
+    ),
+  );
+}
+
+const PATH_NUMBER = /[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/gi;
+
+function transformPathToA4(path: string, width: number, height: number) {
+  const residue = path.replace(PATH_NUMBER, "");
+  if (!/^[\s,MLQ]+$/i.test(residue)) {
+    throw new RequestError("invalid stored drawing", 500);
+  }
+
+  const { scale, offsetX, offsetY } = placementOnA4(width, height);
+  let coordinateIndex = 0;
+  const transformed = path.replace(PATH_NUMBER, (token) => {
+    const coordinate = Number(token);
+    if (!Number.isFinite(coordinate)) {
+      throw new RequestError("invalid stored drawing", 500);
+    }
+    const isX = coordinateIndex % 2 === 0;
+    coordinateIndex += 1;
+    return fixed(coordinate * scale + (isX ? offsetX : offsetY));
+  });
+
+  if (coordinateIndex === 0 || coordinateIndex % 2 !== 0) {
+    throw new RequestError("invalid stored drawing", 500);
+  }
+  return transformed;
+}
+
+function buildDownloadSvg(drawing: DrawingRow) {
+  const paths = [
+    ...drawing.svg.matchAll(/<path\b[^>]*\bd="([^"]+)"[^>]*>/gi),
+  ].map((match) => match[1]);
+  if (paths.length === 0) {
+    throw new RequestError("invalid stored drawing", 500);
+  }
+
+  return buildA4Svg(
+    paths.map((path) =>
+      transformPathToA4(path, drawing.width, drawing.height),
+    ),
+  );
 }
 
 async function handleDrawing(request: Request, env: Env) {
@@ -213,8 +303,8 @@ async function handleDrawing(request: Request, env: Env) {
   const result = await upsertDrawing(env.DB, {
     id: payload.id,
     svg,
-    width: payload.width,
-    height: payload.height,
+    width: A4_WIDTH,
+    height: A4_HEIGHT,
   });
   if (!result.success) throw new Error("database write failed");
 
@@ -270,6 +360,7 @@ async function handleDrawingSvg(
   if (!drawing) return json({ error: "not found" }, 404);
 
   const attachment = url.searchParams.get("download") === "1";
+  const svg = attachment ? buildDownloadSvg(drawing) : drawing.svg;
   const headers = {
     "cache-control": "no-store",
     "content-disposition": `${attachment ? "attachment" : "inline"}; filename="${drawingName(drawing)}"`,
@@ -278,7 +369,7 @@ async function handleDrawingSvg(
     "cross-origin-resource-policy": "same-origin",
     "x-content-type-options": "nosniff",
   };
-  return new Response(request.method === "HEAD" ? null : drawing.svg, { headers });
+  return new Response(request.method === "HEAD" ? null : svg, { headers });
 }
 
 async function handleDrawingDownload(request: Request, env: Env) {
@@ -291,25 +382,29 @@ async function handleDrawingDownload(request: Request, env: Env) {
   }
 
   const ids = validateDownload(await readBoundedJson(request));
-  const rows: DrawingRow[] = [];
-  for (let index = 0; index < ids.length; index += 50) {
-    rows.push(...(await findDrawingsByIds(env.DB, ids.slice(index, index + 50))));
-  }
-  const byId = new Map(rows.map((drawing) => [drawing.id, drawing]));
-  if (byId.size !== ids.length) throw new RequestError("not found", 404);
-
   const encoder = new TextEncoder();
   let inputBytes = 0;
   const files: Record<string, Uint8Array> = {};
-  for (const id of ids) {
-    const drawing = byId.get(id);
-    if (!drawing) throw new RequestError("not found", 404);
-    const bytes = encoder.encode(drawing.svg);
-    inputBytes += bytes.byteLength;
-    if (inputBytes > MAX_ARCHIVE_INPUT_BYTES) {
-      throw new RequestError("selection too large", 413);
+
+  for (let index = 0; index < ids.length; index += 50) {
+    const batchIds = ids.slice(index, index + 50);
+    const rows = await findDrawingsByIds(env.DB, batchIds);
+    const byId = new Map(rows.map((drawing) => [drawing.id, drawing]));
+    if (byId.size !== batchIds.length) {
+      throw new RequestError("not found", 404);
     }
-    files[drawingName(drawing)] = strToU8(drawing.svg);
+
+    for (const id of batchIds) {
+      const drawing = byId.get(id);
+      if (!drawing) throw new RequestError("not found", 404);
+      const svg = buildDownloadSvg(drawing);
+      const bytes = encoder.encode(svg);
+      inputBytes += bytes.byteLength;
+      if (inputBytes > MAX_ARCHIVE_INPUT_BYTES) {
+        throw new RequestError("selection too large", 413);
+      }
+      files[drawingName(drawing)] = bytes;
+    }
   }
 
   const archive = zipSync(files, { level: 0 });
@@ -330,6 +425,15 @@ async function handleDrawingDownload(request: Request, env: Env) {
 async function handleApi(request: Request, url: URL, env: Env) {
   try {
     if (url.pathname === "/api/drawings/download") {
+      if (request.method === "POST") {
+        const actor = request.headers.get("cf-connecting-ip") ?? "unknown";
+        const { success } = await env.SUBMISSION_RATE_LIMITER.limit({
+          key: `download:${actor}`,
+        });
+        if (!success) {
+          return json({ error: "slow down" }, 429, { "retry-after": "60" });
+        }
+      }
       return await handleDrawingDownload(request, env);
     }
 

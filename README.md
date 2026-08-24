@@ -1,8 +1,9 @@
 # Scribble
 
-A quiet, full-screen drawing prompt. Each accepted gesture reveals the next
-line of copy. When the sequence is complete, the Worker converts the validated
-point data into canonical SVG and saves it in Cloudflare D1.
+A quiet A4-landscape drawing prompt. Each completed part reveals the next line
+of copy immediately, so the whole five can be drawn without lifting. When the
+sequence is complete, the Worker saves one canonical 1 pt SVG path in
+Cloudflare D1. `/5` lists every kept five with its timestamp and bulk export.
 
 ## Local development
 
@@ -27,12 +28,12 @@ npm test
 
 ## Deploy
 
-Create the production D1 database, replace the placeholder database ID in
-`wrangler.jsonc`, apply migrations remotely, build, and deploy:
+Authenticate with the Cloudflare account that owns the configured D1 database,
+apply any pending migrations, build, and deploy:
 
 ```bash
-npm exec -- wrangler d1 create scribble-db
+npm exec -- wrangler whoami
 npm exec -- wrangler d1 migrations apply scribble-db --remote
 npm run build
-npm exec -- wrangler deploy
+npm exec -- wrangler deploy --strict
 ```
