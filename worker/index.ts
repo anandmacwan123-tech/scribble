@@ -291,9 +291,9 @@ function pathFromPoints(points: Point[]) {
   return `${path} L ${fixed(last.x)} ${fixed(last.y)}`;
 }
 
-function buildA4Svg(paths: string[]) {
+function buildA4Svg(paths: string[], strokeWidth = 1) {
   const compoundPath = paths.join(" ");
-  const element = `<path d="${compoundPath}" fill="none" stroke="#171713" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>`;
+  const element = `<path d="${compoundPath}" fill="none" stroke="#171713" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/>`;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${A4_WIDTH}pt" height="${A4_HEIGHT}pt" viewBox="0 0 ${A4_WIDTH} ${A4_HEIGHT}"><title>Kept fives</title>${element}</svg>`;
 }
@@ -334,7 +334,7 @@ function transformPathToA4(path: string, width: number, height: number) {
   return transformed;
 }
 
-function buildDownloadSvg(drawing: DrawingRow) {
+function buildDownloadSvg(drawing: DrawingRow, strokeWidth = 1) {
   const paths = [
     ...drawing.svg.matchAll(/<path\b[^>]*\bd="([^"]+)"[^>]*>/gi),
   ].map((match) => match[1]);
@@ -346,6 +346,7 @@ function buildDownloadSvg(drawing: DrawingRow) {
     paths.map((path) =>
       transformPathToA4(path, drawing.width, drawing.height),
     ),
+    strokeWidth,
   );
 }
 
@@ -400,7 +401,7 @@ async function handleDrawingList(url: URL, env: Env) {
       height: drawing.height,
       createdAt: new Date(drawing.created_at * 1000).toISOString(),
       updatedAt: new Date(drawing.updated_at * 1000).toISOString(),
-      previewUrl: `/api/drawings/${drawing.id}.svg`,
+      previewUrl: `/api/drawings/${drawing.id}.svg?preview=1`,
       downloadUrl: `/api/drawings/${drawing.id}.svg?download=1`,
     })),
     nextCursor:
@@ -422,7 +423,8 @@ async function handleDrawingSvg(
   if (!drawing) return json({ error: "not found" }, 404);
 
   const attachment = url.searchParams.get("download") === "1";
-  const svg = buildDownloadSvg(drawing);
+  const preview = !attachment && url.searchParams.get("preview") === "1";
+  const svg = buildDownloadSvg(drawing, preview ? 2 : 1);
   const headers = {
     "cache-control": "no-store",
     "content-disposition": `${attachment ? "attachment" : "inline"}; filename="${drawingName(drawing)}"`,

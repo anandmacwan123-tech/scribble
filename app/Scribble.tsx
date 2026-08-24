@@ -155,6 +155,18 @@ export default function Scribble() {
     });
   }, []);
 
+  const resetDrawing = useCallback(() => {
+    activePointerRef.current = null;
+    strokesRef.current = [];
+    sessionRef.current = "";
+    keyboardDrawingRef.current = false;
+    setFiveDetected(false);
+    setStrokes([]);
+    setRedoHistory([]);
+    setCurrentStroke([]);
+    setStatus("ready");
+  }, [setCurrentStroke, setFiveDetected, setRedoHistory]);
+
   useEffect(
     () => () => {
       saveControllerRef.current?.abort();
@@ -204,8 +216,8 @@ export default function Scribble() {
 
       if (!response.ok) throw new Error("save failed");
       if (saveControllerRef.current !== controller) return;
-      setStatus("saved");
       refreshRecentDrawings();
+      resetDrawing();
     } catch {
       if (controller.signal.aborted || saveControllerRef.current !== controller) {
         return;
@@ -216,7 +228,7 @@ export default function Scribble() {
         saveControllerRef.current = null;
       }
     }
-  }, [refreshRecentDrawings]);
+  }, [refreshRecentDrawings, resetDrawing]);
 
   const detectFive = useCallback(
     (points: readonly Point[]) => {
@@ -389,15 +401,7 @@ export default function Scribble() {
       surfaceRef.current.releasePointerCapture(pointerId);
     }
 
-    activePointerRef.current = null;
-    strokesRef.current = [];
-    sessionRef.current = "";
-    keyboardDrawingRef.current = false;
-    setFiveDetected(false);
-    setStrokes([]);
-    setRedoHistory([]);
-    setCurrentStroke([]);
-    setStatus("ready");
+    resetDrawing();
   };
 
   const historyAvailable =
@@ -543,20 +547,36 @@ export default function Scribble() {
 
       <div className="drawing-controls" role="group" aria-label="Drawing actions">
         <button
-          className="drawing-control"
+          className="drawing-control drawing-control--history"
           type="button"
+          aria-label="Undo"
           disabled={!historyAvailable || strokes.length === 0}
           onClick={undo}
         >
-          Undo
+          <svg
+            aria-hidden="true"
+            focusable="false"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+          >
+            <path d="M5.82843 6.99955L8.36396 9.53509L6.94975 10.9493L2 5.99955L6.94975 1.0498L8.36396 2.46402L5.82843 4.99955H13C17.4183 4.99955 21 8.58127 21 12.9996C21 17.4178 17.4183 20.9996 13 20.9996H4V18.9996H13C16.3137 18.9996 19 16.3133 19 12.9996C19 9.68584 16.3137 6.99955 13 6.99955H5.82843Z" />
+          </svg>
         </button>
         <button
-          className="drawing-control"
+          className="drawing-control drawing-control--history"
           type="button"
+          aria-label="Redo"
           disabled={!historyAvailable || redoStrokes.length === 0}
           onClick={redo}
         >
-          Redo
+          <svg
+            aria-hidden="true"
+            focusable="false"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+          >
+            <path d="M18.1716 6.99955H11C7.68629 6.99955 5 9.68584 5 12.9996C5 16.3133 7.68629 18.9996 11 18.9996H20V20.9996H11C6.58172 20.9996 3 17.4178 3 12.9996C3 8.58127 6.58172 4.99955 11 4.99955H18.1716L15.636 2.46402L17.0503 1.0498L22 5.99955L17.0503 10.9493L15.636 9.53509L18.1716 6.99955Z" />
+          </svg>
         </button>
         <button className="drawing-control" type="button" onClick={clearAll}>
           Clear all
@@ -600,26 +620,19 @@ export default function Scribble() {
       </div>
 
       {recentDrawings.length > 0 ? (
-        <aside className="recent-submissions" aria-label="Recent submissions">
-          {recentDrawings.map((drawing) => {
-            const label = recentDateFormatter.format(new Date(drawing.createdAt));
-            return (
-              <a
-                className="recent-submission"
-                href="/5"
-                key={drawing.id}
-                aria-label={`Open saved drawings; recent submission saved ${label}`}
-              >
-                {/* Dynamic Worker SVGs are already canonical and should not pass through image optimization. */}
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={drawing.previewUrl}
-                  alt=""
-                  draggable="false"
-                />
-              </a>
-            );
-          })}
+        <aside className="recent-submissions" aria-label="Recent submission previews">
+          {recentDrawings.map((drawing) => (
+            <div
+              className="recent-submission"
+              key={drawing.id}
+              role="img"
+              aria-label={`Submission saved ${recentDateFormatter.format(new Date(drawing.createdAt))}`}
+            >
+              {/* Dynamic Worker SVGs are already canonical and should not pass through image optimization. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={drawing.previewUrl} alt="" draggable="false" />
+            </div>
+          ))}
         </aside>
       ) : null}
     </main>

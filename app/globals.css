@@ -129,6 +129,19 @@ button {
   touch-action: manipulation;
 }
 
+.drawing-control--history {
+  display: inline-grid;
+  width: 44px;
+  min-width: 44px;
+  padding: 0;
+  place-items: center;
+}
+
+.drawing-control--history svg {
+  width: 18px;
+  height: 18px;
+}
+
 .drawing-control--submit {
   opacity: 1;
 }
@@ -181,6 +194,7 @@ button {
   width: clamp(46px, 4.5vw, 64px);
   gap: 8px;
   transform: translateY(-50%);
+  pointer-events: none;
 }
 
 .recent-submission {
@@ -189,18 +203,7 @@ button {
   aspect-ratio: 595 / 842;
   background: rgba(255, 255, 255, 0.24);
   box-shadow: 0 0 0 1pt rgba(23, 23, 19, 0.05);
-  opacity: 0.64;
-  transition: opacity 140ms ease;
-}
-
-.recent-submission:hover,
-.recent-submission:focus-visible {
   opacity: 1;
-}
-
-.recent-submission:focus-visible {
-  outline: 1px solid var(--ink);
-  outline-offset: 3px;
 }
 
 .recent-submission img {

@@ -104,8 +104,8 @@ test("renders the quiet drawing surface with the supplied typeface", async () =>
   const html = await response.text();
   assert.match(html, /<title>Draw a 5<\/title>/i);
   assert.match(html, /Draw a 5\./);
-  assert.match(html, /<button[^>]*disabled[^>]*>Undo<\/button>/);
-  assert.match(html, /<button[^>]*disabled[^>]*>Redo<\/button>/);
+  assert.match(html, /<button[^>]*aria-label="Undo"[^>]*disabled[^>]*>/);
+  assert.match(html, /<button[^>]*aria-label="Redo"[^>]*disabled[^>]*>/);
   assert.match(html, />Clear all<\/button>/);
   assert.match(html, /<button[^>]*disabled[^>]*>Submit<\/button>/);
   assert.doesNotMatch(html, /Begin high|Travel left|fall straight|Sweep back/i);
@@ -124,6 +124,7 @@ test("renders the quiet drawing surface with the supplied typeface", async () =>
   assert.match(css, /\.dot-grid\s*{[^}]*opacity:\s*0\.1/s);
   assert.match(css, /\.recent-submissions\s*{[^}]*right:[^}]*width:[^}]*transform:\s*translateY\(-50%\)/s);
   assert.match(css, /\.recent-submission\s*{[^}]*aspect-ratio:\s*595\s*\/\s*842/s);
+  assert.match(css, /\.recent-submissions\s*{[^}]*pointer-events:\s*none/s);
   assert.match(css, /@media \(max-width:\s*700px\), \(max-aspect-ratio:\s*3\s*\/\s*4\)[\s\S]*?--canvas-inline-width:\s*calc\(100vw\s*-\s*104px\)/s);
   assert.match(css, /vector-effect:\s*non-scaling-stroke/);
   assert.match(gesture, /MIN_STROKE_TRAVEL = 8/);
@@ -136,13 +137,17 @@ test("renders the quiet drawing surface with the supplied typeface", async () =>
   assert.match(client, /Clear all/);
   assert.match(client, /Undo/);
   assert.match(client, /Redo/);
+  assert.match(client, /M5\.82843 6\.99955L8\.36396 9\.53509/);
+  assert.match(client, /M18\.1716 6\.99955H11/);
   assert.match(client, /undoStroke\(strokesRef\.current, redoStrokesRef\.current\)/);
   assert.match(client, /redoStroke\(strokesRef\.current, redoStrokesRef\.current\)/);
   assert.match(client, /fetch\("\/api\/drawings\?limit=3"/);
   assert.match(client, /result\.drawings\.slice\(0, 3\)/);
   assert.match(client, /recentControllerRef\.current\?\.abort\(\)/);
   assert.match(client, /recentControllerRef\.current !== controller/);
-  assert.match(client, /aria-label="Recent submissions"/);
+  assert.match(client, /aria-label="Recent submission previews"/);
+  assert.doesNotMatch(client, /className="recent-submission"[\s\S]*?href="\/5"/);
+  assert.match(client, /refreshRecentDrawings\(\);\s*resetDrawing\(\);/);
   assert.match(client, /disabled={submitDisabled}/);
   assert.match(client, /const canvasViewBox/);
   assert.match(client, /Five detected\. Submit available\./);
@@ -439,7 +444,7 @@ test("lists timestamped metadata without exposing stored SVG", async () => {
   assert.equal(data.drawings.length, 1);
   assert.equal(data.drawings[0].id, rows[0].id);
   assert.equal(data.drawings[0].createdAt, "2026-08-24T08:00:00.000Z");
-  assert.equal(data.drawings[0].previewUrl, `/api/drawings/${rows[0].id}.svg`);
+  assert.equal(data.drawings[0].previewUrl, `/api/drawings/${rows[0].id}.svg?preview=1`);
   assert.equal("svg" in data.drawings[0], false);
   assert.equal(data.nextCursor, `${rows[0].created_at}:${rows[0].id}`);
 });
@@ -474,6 +479,28 @@ test("serves only canonical stored SVG with restrictive headers", async () => {
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
   assert.equal(response.headers.get("cross-origin-resource-policy"), "same-origin");
   assert.match(response.headers.get("content-security-policy") ?? "", /sandbox/);
+  assert.match(response.headers.get("content-disposition") ?? "", /^inline;/);
+});
+
+test("renders thicker preview strokes without changing canonical SVGs", async () => {
+  const worker = await loadWorker();
+  const id = drawingPayload().id;
+  const stored = {
+    id,
+    svg: '<svg xmlns="http://www.w3.org/2000/svg"><path d="M 0 0 L 1 1"/></svg>',
+    width: 595,
+    height: 842,
+    created_at: 1_787_558_400,
+    updated_at: 1_787_558_400,
+  };
+  const response = await worker.fetch(
+    new Request(`http://localhost/api/drawings/${id}.svg?preview=1`),
+    makeEnv({ onFirst: async () => stored }),
+    executionContext(),
+  );
+
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /stroke-width="2"/);
   assert.match(response.headers.get("content-disposition") ?? "", /^inline;/);
 });
 
