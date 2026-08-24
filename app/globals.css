@@ -49,13 +49,14 @@ button {
 .canvas-stage {
   position: fixed;
   z-index: 1;
-  top: 50%;
+  top: calc(50% - 60px);
   left: 50%;
-  width: min(100vw, calc(100vh * 1.4151260504));
-  width: min(100vw, calc(100dvh * 1.4151260504));
+  width: min(calc(100vw - 32px), calc(141.51260504vh - 215.898px));
+  width: min(calc(100vw - 32px), calc(141.51260504dvh - 215.898px));
   aspect-ratio: 842 / 595;
   overflow: hidden;
   background-color: var(--paper);
+  box-shadow: 0 0 0 1pt rgba(23, 23, 19, 0.05);
   transform: translate(-50%, -50%);
 }
 
@@ -389,6 +390,12 @@ button {
 }
 
 @media (max-width: 600px) {
+  .canvas-stage {
+    top: calc(50% - 34px);
+    width: min(calc(100vw - 32px), calc(141.51260504vh - 288.686px));
+    width: min(calc(100vw - 32px), calc(141.51260504dvh - 288.686px));
+  }
+
   .instruction {
     bottom: max(68px, calc(env(safe-area-inset-bottom) + 56px));
     width: calc(100vw - 40px);

@@ -113,6 +113,8 @@ test("renders the quiet drawing surface with the supplied typeface", async () =>
   assert.doesNotMatch(css, /Futura-Bold\.woff2|font-weight:\s*(?:[5-9]00|bold)/);
   assert.match(css, /\.instruction\s*{[^}]*bottom:[^}]*left:\s*50%[^}]*text-align:\s*center/s);
   assert.match(css, /aspect-ratio:\s*842\s*\/\s*595/);
+  assert.match(css, /\.canvas-stage\s*{[^}]*100vw\s*-\s*32px[^}]*141\.51260504dvh[^}]*box-shadow:\s*0 0 0 1pt rgba\(23, 23, 19, 0\.05\)/s);
+  assert.match(css, /@media \(max-width:\s*600px\)[\s\S]*?\.canvas-stage\s*{[^}]*top:\s*calc\(50%\s*-\s*34px\)[^}]*141\.51260504dvh\s*-\s*288\.686px/s);
   assert.match(css, /\.dot-grid\s*{[^}]*opacity:\s*0\.05/s);
   assert.match(css, /vector-effect:\s*non-scaling-stroke/);
   assert.match(gesture, /MIN_STROKE_TRAVEL = 8/);
