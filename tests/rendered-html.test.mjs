@@ -474,6 +474,7 @@ test("serves only canonical stored SVG with restrictive headers", async () => {
   assert.match(canonical, /height="842pt"/);
   assert.match(canonical, /viewBox="0 0 595 842"/);
   assert.match(canonical, /stroke-width="1"/);
+  assert.doesNotMatch(canonical, /vector-effect=/);
   assert.equal((canonical.match(/<path /g) ?? []).length, 1);
   assert.match(response.headers.get("content-type") ?? "", /^image\/svg\+xml/);
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
@@ -500,7 +501,9 @@ test("renders thicker preview strokes without changing canonical SVGs", async ()
   );
 
   assert.equal(response.status, 200);
-  assert.match(await response.text(), /stroke-width="2"/);
+  const preview = await response.text();
+  assert.match(preview, /stroke-width="2"/);
+  assert.match(preview, /vector-effect="non-scaling-stroke"/);
   assert.match(response.headers.get("content-disposition") ?? "", /^inline;/);
 });
 

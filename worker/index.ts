@@ -291,9 +291,16 @@ function pathFromPoints(points: Point[]) {
   return `${path} L ${fixed(last.x)} ${fixed(last.y)}`;
 }
 
-function buildA4Svg(paths: string[], strokeWidth = 1) {
+function buildA4Svg(
+  paths: string[],
+  strokeWidth = 1,
+  nonScalingStroke = false,
+) {
   const compoundPath = paths.join(" ");
-  const element = `<path d="${compoundPath}" fill="none" stroke="#171713" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/>`;
+  const vectorEffect = nonScalingStroke
+    ? ' vector-effect="non-scaling-stroke"'
+    : "";
+  const element = `<path d="${compoundPath}" fill="none" stroke="#171713" stroke-width="${strokeWidth}"${vectorEffect} stroke-linecap="round" stroke-linejoin="round"/>`;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${A4_WIDTH}pt" height="${A4_HEIGHT}pt" viewBox="0 0 ${A4_WIDTH} ${A4_HEIGHT}"><title>Kept fives</title>${element}</svg>`;
 }
@@ -334,7 +341,11 @@ function transformPathToA4(path: string, width: number, height: number) {
   return transformed;
 }
 
-function buildDownloadSvg(drawing: DrawingRow, strokeWidth = 1) {
+function buildDownloadSvg(
+  drawing: DrawingRow,
+  strokeWidth = 1,
+  nonScalingStroke = false,
+) {
   const paths = [
     ...drawing.svg.matchAll(/<path\b[^>]*\bd="([^"]+)"[^>]*>/gi),
   ].map((match) => match[1]);
@@ -347,6 +358,7 @@ function buildDownloadSvg(drawing: DrawingRow, strokeWidth = 1) {
       transformPathToA4(path, drawing.width, drawing.height),
     ),
     strokeWidth,
+    nonScalingStroke,
   );
 }
 
@@ -424,7 +436,7 @@ async function handleDrawingSvg(
 
   const attachment = url.searchParams.get("download") === "1";
   const preview = !attachment && url.searchParams.get("preview") === "1";
-  const svg = buildDownloadSvg(drawing, preview ? 2 : 1);
+  const svg = buildDownloadSvg(drawing, preview ? 2 : 1, preview);
   const headers = {
     "cache-control": "no-store",
     "content-disposition": `${attachment ? "attachment" : "inline"}; filename="${drawingName(drawing)}"`,
