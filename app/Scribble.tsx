@@ -14,7 +14,6 @@ import {
   MIN_POINT_GAP,
   clientPointToCanvas,
   distance,
-  hasDetectedFive,
   isAccepted,
   type Point,
 } from "./gesture";
@@ -109,7 +108,6 @@ export default function Scribble() {
   const [strokes, setStrokes] = useState<Point[][]>([]);
   const [activeStroke, setActiveStroke] = useState<Point[]>([]);
   const [redoStrokes, setRedoStrokes] = useState<Point[][]>([]);
-  const [hasFive, setHasFive] = useState(false);
   const [status, setStatus] = useState<DrawStatus>("ready");
   const [zoomIndex, setZoomIndex] = useState(0);
   const [recentDrawings, setRecentDrawings] = useState<RecentDrawing[]>([]);
@@ -120,7 +118,6 @@ export default function Scribble() {
   const activePointerRef = useRef<number | null>(null);
   const strokesRef = useRef<Point[][]>([]);
   const redoStrokesRef = useRef<Point[][]>([]);
-  const hasFiveRef = useRef(false);
   const sessionRef = useRef("");
   const saveControllerRef = useRef<AbortController | null>(null);
   const recentControllerRef = useRef<AbortController | null>(null);
@@ -131,11 +128,6 @@ export default function Scribble() {
   const setCurrentStroke = useCallback((points: Point[]) => {
     activeRef.current = points;
     setActiveStroke(points);
-  }, []);
-
-  const setFiveDetected = useCallback((detected: boolean) => {
-    hasFiveRef.current = detected;
-    setHasFive(detected);
   }, []);
 
   const setRedoHistory = useCallback((nextStrokes: Point[][]) => {
@@ -160,12 +152,11 @@ export default function Scribble() {
     strokesRef.current = [];
     sessionRef.current = "";
     keyboardDrawingRef.current = false;
-    setFiveDetected(false);
     setStrokes([]);
     setRedoHistory([]);
     setCurrentStroke([]);
     setStatus("ready");
-  }, [setCurrentStroke, setFiveDetected, setRedoHistory]);
+  }, [setCurrentStroke, setRedoHistory]);
 
   useEffect(
     () => () => {
@@ -230,20 +221,10 @@ export default function Scribble() {
     }
   }, [refreshRecentDrawings, resetDrawing]);
 
-  const detectFive = useCallback(
-    (points: readonly Point[]) => {
-      if (!hasFiveRef.current && hasDetectedFive(points)) {
-        setFiveDetected(true);
-      }
-    },
-    [setFiveDetected],
-  );
-
   const finishStroke = useCallback(
     (points: readonly Point[]) => {
       const cleaned = roundedPoints(points);
       if (isAccepted(cleaned)) {
-        detectFive(cleaned);
         const nextStrokes = [...strokesRef.current, cleaned];
         strokesRef.current = nextStrokes;
         setStrokes(nextStrokes);
@@ -254,7 +235,7 @@ export default function Scribble() {
       keyboardDrawingRef.current = false;
       setStatus("ready");
     },
-    [detectFive, setCurrentStroke, setRedoHistory],
+    [setCurrentStroke, setRedoHistory],
   );
 
   const pointFromClient = useCallback(
@@ -285,9 +266,8 @@ export default function Scribble() {
           : current;
       const nextPoints = [...retainedPoints, point];
       setCurrentStroke(nextPoints);
-      detectFive(nextPoints);
     },
-    [detectFive, setCurrentStroke],
+    [setCurrentStroke],
   );
 
   const canDraw = status !== "saving" && status !== "saved";
@@ -339,9 +319,8 @@ export default function Scribble() {
     activePointerRef.current = null;
     setCurrentStroke([]);
     keyboardDrawingRef.current = false;
-    setFiveDetected(strokesRef.current.some(hasDetectedFive));
     setStatus("ready");
-  }, [setCurrentStroke, setFiveDetected]);
+  }, [setCurrentStroke]);
 
   const cancelPointer = (event: ReactPointerEvent<SVGSVGElement>) => {
     if (event.pointerId !== activePointerRef.current) return;
@@ -415,7 +394,6 @@ export default function Scribble() {
     strokesRef.current = next.strokes;
     setStrokes(next.strokes);
     setRedoHistory(next.redoStrokes);
-    setFiveDetected(next.strokes.some(hasDetectedFive));
     setStatus("ready");
   };
 
@@ -427,12 +405,11 @@ export default function Scribble() {
     strokesRef.current = next.strokes;
     setStrokes(next.strokes);
     setRedoHistory(next.redoStrokes);
-    setFiveDetected(next.strokes.some(hasDetectedFive));
     setStatus("ready");
   };
 
   const submit = () => {
-    if (!hasFiveRef.current || status === "saving" || status === "saved") return;
+    if (status === "saving" || status === "saved") return;
 
     let nextStrokes = strokesRef.current;
     if (isAccepted(activeRef.current)) {
@@ -466,7 +443,8 @@ export default function Scribble() {
         : status === "error"
           ? "Try again"
           : "Submit";
-  const submitDisabled = !hasFive || status === "saving" || status === "saved";
+  const submitDisabled =
+    strokes.length === 0 || status === "saving" || status === "saved";
   const statusMessage =
     status === "saving"
       ? "Submitting your sheet."
@@ -474,8 +452,8 @@ export default function Scribble() {
         ? "Sheet submitted."
         : status === "error"
           ? "Submission failed. Try again."
-          : hasFive
-            ? "Five detected. Submit available."
+          : strokes.length > 0
+            ? "Submit available."
             : "";
   const viewWidth = WIDTH / zoom;
   const viewHeight = HEIGHT / zoom;

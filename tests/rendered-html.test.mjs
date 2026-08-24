@@ -128,8 +128,7 @@ test("renders the quiet drawing surface with the supplied typeface", async () =>
   assert.match(css, /@media \(max-width:\s*700px\), \(max-aspect-ratio:\s*3\s*\/\s*4\)[\s\S]*?--canvas-inline-width:\s*calc\(100vw\s*-\s*104px\)/s);
   assert.match(css, /vector-effect:\s*non-scaling-stroke/);
   assert.match(gesture, /MIN_STROKE_TRAVEL = 8/);
-  assert.match(gesture, /function hasReachedPrompt/);
-  assert.match(gesture, /function hasDetectedFive/);
+  assert.doesNotMatch(gesture, /hasReachedPrompt|hasDetectedFive|getFiveProgress/);
   assert.match(gesture, /function clientPointToCanvas/);
   assert.doesNotMatch(client, /AUTO_ADVANCE_TRAVEL|IDLE_ADVANCE_MS/);
   assert.doesNotMatch(client, /const prompts|eraser/i);
@@ -150,7 +149,8 @@ test("renders the quiet drawing surface with the supplied typeface", async () =>
   assert.match(client, /refreshRecentDrawings\(\);\s*resetDrawing\(\);/);
   assert.match(client, /disabled={submitDisabled}/);
   assert.match(client, /const canvasViewBox/);
-  assert.match(client, /Five detected\. Submit available\./);
+  assert.match(client, /Submit available\./);
+  assert.doesNotMatch(client, /hasFive|hasDetectedFive|Five detected/);
   assert.match(client, /saveControllerRef\.current\?\.abort\(\)/);
   assert.match(gallery, /const MAX_BULK_SELECTION = 500;/);
   assert.match(gallery, /toggleAll|allSelected/);
@@ -266,7 +266,7 @@ test("accepts a multi-stroke A4 sheet and keeps every stroke in one SVG path", a
   assert.doesNotMatch(write.values[1], /<pattern|<circle|dot-grid|zoom/i);
 });
 
-test("keeps accepting a legacy staged five after server-side recognition", async () => {
+test("keeps accepting legacy canvas dimensions", async () => {
   const worker = await loadWorker();
   const payload = drawingPayload();
   payload.width = 1000;
@@ -335,7 +335,7 @@ test("keeps accepting the previous landscape A4 canvas", async () => {
   assert.match(write.values[1], /stroke-width="1"/);
 });
 
-test("rejects a sheet without a detected five before touching D1", async () => {
+test("accepts an arbitrary drawing without shape detection", async () => {
   const worker = await loadWorker();
   const payload = drawingPayload();
   payload.strokes = [
@@ -360,9 +360,8 @@ test("rejects a sheet without a detected five before touching D1", async () => {
     executionContext(),
   );
 
-  assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), { error: "five not detected" });
-  assert.equal(writes, 0);
+  assert.equal(response.status, 201);
+  assert.equal(writes, 1);
 });
 
 test("rejects markup and malformed point data before touching D1", async () => {

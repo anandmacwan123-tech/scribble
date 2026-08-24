@@ -9,7 +9,6 @@ import {
   type DrawingMetadataRow,
   type DrawingRow,
 } from "../db/drawings";
-import { distance, hasDetectedFive } from "../app/gesture";
 
 type Point = { x: number; y: number };
 type DrawingPayload = {
@@ -29,7 +28,6 @@ const MAX_BODY_BYTES = 384 * 1024;
 const MAX_POINTS_PER_STROKE = 900;
 const MAX_POINTS = 8000;
 const MAX_STROKES = MAX_POINTS / 2;
-const MAX_STROKE_JOIN = 60;
 const LIST_PAGE_SIZE = 100;
 const MAX_DOWNLOADS = 500;
 const MAX_ARCHIVE_INPUT_BYTES = 8 * 1024 * 1024;
@@ -95,28 +93,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function containsFive(strokes: Point[][], width: number, height: number) {
-  const normalized = strokes.map((stroke) =>
-    stroke.map(({ x, y }) => ({
-      x: (x / width) * A4_WIDTH,
-      y: (y / height) * A4_HEIGHT,
-    })),
-  );
-
-  if (normalized.some(hasDetectedFive)) return true;
-
-  let joined: Point[] = [];
-  for (const stroke of normalized) {
-    const previous = joined.at(-1);
-    if (previous && distance(previous, stroke[0]) > MAX_STROKE_JOIN) {
-      if (hasDetectedFive(joined)) return true;
-      joined = [];
-    }
-    joined.push(...stroke);
-  }
-  return hasDetectedFive(joined);
-}
-
 function validatePayload(value: unknown): DrawingPayload {
   if (!isRecord(value)) throw new RequestError("invalid drawing", 400);
   if (typeof value.id !== "string" || !UUID_PATTERN.test(value.id)) {
@@ -171,10 +147,6 @@ function validatePayload(value: unknown): DrawingPayload {
       return { x, y };
     });
   });
-
-  if (!containsFive(strokes, width, height)) {
-    throw new RequestError("five not detected", 400);
-  }
 
   return {
     id: value.id,
