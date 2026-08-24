@@ -98,8 +98,11 @@ test("renders the quiet drawing surface with the supplied typeface", async () =>
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>Follow the line<\/title>/i);
-  assert.match(html, /Begin high and to the right\. Travel left\./);
+  assert.match(html, /<title>Draw a 5<\/title>/i);
+  assert.match(html, /Draw a 5\./);
+  assert.match(html, />Clear all<\/button>/);
+  assert.match(html, /<button[^>]*disabled[^>]*>Submit<\/button>/);
+  assert.doesNotMatch(html, /Begin high|Travel left|fall straight|Sweep back/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
@@ -110,9 +113,19 @@ test("renders the quiet drawing surface with the supplied typeface", async () =>
   assert.doesNotMatch(css, /Futura-Bold\.woff2|font-weight:\s*(?:[5-9]00|bold)/);
   assert.match(css, /\.instruction\s*{[^}]*bottom:[^}]*left:\s*50%[^}]*text-align:\s*center/s);
   assert.match(css, /aspect-ratio:\s*842\s*\/\s*595/);
+  assert.match(css, /\.dot-grid\s*{[^}]*opacity:\s*0\.05/s);
+  assert.match(css, /vector-effect:\s*non-scaling-stroke/);
   assert.match(gesture, /MIN_STROKE_TRAVEL = 8/);
   assert.match(gesture, /function hasReachedPrompt/);
+  assert.match(gesture, /function hasDetectedFive/);
+  assert.match(gesture, /function clientPointToCanvas/);
   assert.doesNotMatch(client, /AUTO_ADVANCE_TRAVEL|IDLE_ADVANCE_MS/);
+  assert.doesNotMatch(client, /const prompts|eraser/i);
+  assert.match(client, /Draw a 5\./);
+  assert.match(client, /Clear all/);
+  assert.match(client, /disabled={submitDisabled}/);
+  assert.match(client, /const canvasViewBox/);
+  assert.match(client, /Five detected\. Submit available\./);
   assert.match(client, /saveControllerRef\.current\?\.abort\(\)/);
   assert.match(gallery, /const MAX_BULK_SELECTION = 500;/);
   assert.match(gallery, /toggleAll|allSelected/);
@@ -170,6 +183,118 @@ test("constructs canonical SVG on the server and writes it to D1", async () => {
   assert.equal(write.values[2], 842);
   assert.equal(write.values[3], 595);
   assert.doesNotMatch(write.values[1], /<script|onload=/i);
+  assert.doesNotMatch(write.values[1], /<pattern|<circle|dot-grid|zoom/i);
+});
+
+test("accepts a multi-stroke A4 sheet and keeps every stroke in one SVG path", async () => {
+  const worker = await loadWorker();
+  const payload = drawingPayload();
+  payload.strokes = [
+    drawingPayload().strokes.flat(),
+    [
+        { x: 0, y: 0 },
+        { x: 842, y: 595 },
+    ],
+    ...Array.from({ length: 10 }, (_, index) => {
+    const column = index % 4;
+    const row = Math.floor(index / 4);
+    const x = 80 + column * 180;
+    const y = 70 + row * 170;
+    return [
+      { x, y },
+      { x: x + 70, y: y + 60 },
+    ];
+    }),
+  ];
+
+  let write;
+  const response = await worker.fetch(
+    new Request("http://localhost/api/drawings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+    makeEnv({
+      onRun(value) {
+        write = value;
+      },
+    }),
+    executionContext(),
+  );
+
+  assert.equal(response.status, 201);
+  assert.ok(write);
+  assert.equal((write.values[1].match(/<path /g) ?? []).length, 1);
+  assert.equal((write.values[1].match(/\bM /g) ?? []).length, 12);
+  assert.match(write.values[1], /width="842pt"/);
+  assert.match(write.values[1], /height="595pt"/);
+  assert.match(write.values[1], /stroke-width="1"/);
+  assert.match(write.values[1], /M 0 0 L 842 595/);
+  assert.doesNotMatch(write.values[1], /<pattern|<circle|dot-grid|zoom/i);
+});
+
+test("keeps accepting a legacy staged five after server-side recognition", async () => {
+  const worker = await loadWorker();
+  const payload = drawingPayload();
+  payload.width = 1000;
+  payload.height = 700;
+  payload.strokes = payload.strokes.map((stroke) =>
+    stroke.map(({ x, y }) => ({
+      x: (x / 842) * 1000,
+      y: (y / 595) * 700,
+    })),
+  );
+
+  let write;
+  const response = await worker.fetch(
+    new Request("http://localhost/api/drawings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+    makeEnv({
+      onRun(value) {
+        write = value;
+      },
+    }),
+    executionContext(),
+  );
+
+  assert.equal(response.status, 201);
+  assert.ok(write);
+  assert.equal(write.values[2], 842);
+  assert.equal(write.values[3], 595);
+  assert.match(write.values[1], /stroke-width="1"/);
+});
+
+test("rejects a sheet without a detected five before touching D1", async () => {
+  const worker = await loadWorker();
+  const payload = drawingPayload();
+  payload.strokes = [
+    [
+      { x: 100, y: 100 },
+      { x: 700, y: 100 },
+    ],
+  ];
+  let writes = 0;
+
+  const response = await worker.fetch(
+    new Request("http://localhost/api/drawings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+    makeEnv({
+      onRun() {
+        writes += 1;
+      },
+    }),
+    executionContext(),
+  );
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "five not detected" });
+  assert.equal(writes, 0);
 });
 
 test("rejects markup and malformed point data before touching D1", async () => {

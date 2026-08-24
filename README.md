@@ -1,9 +1,10 @@
 # Scribble
 
-A quiet A4-landscape drawing prompt. Each completed part reveals the next line
-of copy immediately, so the whole five can be drawn without lifting. When the
-sequence is complete, the Worker saves one canonical 1 pt SVG path in
-Cloudflare D1. `/5` lists every kept five with its timestamp and bulk export.
+A quiet A4-landscape page for drawing fives. Recognition runs continuously and
+unlocks an explicit Submit action after a five is detected, while the page stays
+open for more marks. The dot grid and zoom are view-only; submitted sheets are
+stored in Cloudflare D1 as one canonical 1 pt SVG path. `/5` lists every kept
+sheet with its timestamp and bulk export.
 
 ## Local development
 
@@ -35,5 +36,5 @@ apply any pending migrations, build, and deploy:
 npm exec -- wrangler whoami
 npm exec -- wrangler d1 migrations apply scribble-db --remote
 npm run build
-npm exec -- wrangler deploy --strict
+npm exec -- wrangler deploy --strict --keep-vars
 ```

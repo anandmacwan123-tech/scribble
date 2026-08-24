@@ -12,28 +12,24 @@ import {
   CANVAS_HEIGHT as HEIGHT,
   CANVAS_WIDTH as WIDTH,
   MIN_POINT_GAP,
+  clientPointToCanvas,
   distance,
-  hasReachedPrompt,
+  hasDetectedFive,
   isAccepted,
   type Point,
 } from "./gesture";
 
 type DrawStatus = "ready" | "drawing" | "saving" | "saved" | "error";
-type StrokeResult = "ignored" | "advanced" | "complete";
 
-const prompts = [
-  "Begin high and to the right. Travel left.",
-  "From the end, fall straight down.",
-  "Turn and move right, gently.",
-  "Round the outside and sink lower.",
-  "Sweep back toward the middle, then let go.",
-] as const;
+const ZOOM_LEVELS = [1, 1.25, 1.5, 2] as const;
+const MAX_SUBMISSION_POINTS = 7600;
+const MAX_POINTS_PER_STROKE = 880;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function pathFromPoints(points: Point[]) {
+function pathFromPoints(points: readonly Point[]) {
   if (points.length < 2) return "";
 
   let path = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
@@ -49,31 +45,71 @@ function pathFromPoints(points: Point[]) {
   return `${path} L ${last.x.toFixed(1)} ${last.y.toFixed(1)}`;
 }
 
-function roundedPoints(points: Point[]) {
+function roundedPoints(points: readonly Point[]) {
   return points.map(({ x, y }) => ({
     x: Math.round(clamp(x, 0, WIDTH) * 10) / 10,
     y: Math.round(clamp(y, 0, HEIGHT) * 10) / 10,
   }));
 }
 
+function samplePoints(points: readonly Point[], limit: number) {
+  if (points.length <= limit) return roundedPoints(points);
+
+  const sampled: Point[] = [];
+  for (let index = 0; index < limit; index += 1) {
+    const sourceIndex = Math.round(
+      (index * (points.length - 1)) / (limit - 1),
+    );
+    sampled.push(points[sourceIndex]);
+  }
+  return roundedPoints(sampled);
+}
+
+function prepareStrokesForSubmission(strokes: readonly Point[][]) {
+  let remainingPoints = MAX_SUBMISSION_POINTS;
+
+  return strokes.map((stroke, index) => {
+    const remainingStrokes = strokes.length - index;
+    const fairShare = Math.max(
+      2,
+      Math.floor(remainingPoints / remainingStrokes),
+    );
+    const sampled = samplePoints(
+      stroke,
+      Math.min(MAX_POINTS_PER_STROKE, fairShare),
+    );
+    remainingPoints -= sampled.length;
+    return sampled;
+  });
+}
+
 export default function Scribble() {
-  const [promptIndex, setPromptIndex] = useState(0);
   const [strokes, setStrokes] = useState<Point[][]>([]);
   const [activeStroke, setActiveStroke] = useState<Point[]>([]);
+  const [hasFive, setHasFive] = useState(false);
   const [status, setStatus] = useState<DrawStatus>("ready");
+  const [zoomIndex, setZoomIndex] = useState(0);
 
+  const stageRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<SVGSVGElement>(null);
   const activeRef = useRef<Point[]>([]);
   const activePointerRef = useRef<number | null>(null);
   const strokesRef = useRef<Point[][]>([]);
+  const hasFiveRef = useRef(false);
   const sessionRef = useRef("");
   const saveControllerRef = useRef<AbortController | null>(null);
-  const unsavedRef = useRef<Point[][] | null>(null);
   const keyboardDrawingRef = useRef(false);
+
+  const zoom = ZOOM_LEVELS[zoomIndex];
 
   const setCurrentStroke = useCallback((points: Point[]) => {
     activeRef.current = points;
     setActiveStroke(points);
+  }, []);
+
+  const setFiveDetected = useCallback((detected: boolean) => {
+    hasFiveRef.current = detected;
+    setHasFive(detected);
   }, []);
 
   useEffect(
@@ -84,7 +120,6 @@ export default function Scribble() {
   );
 
   const save = useCallback(async (nextStrokes: Point[][]) => {
-    unsavedRef.current = nextStrokes;
     if (!sessionRef.current) sessionRef.current = crypto.randomUUID();
     saveControllerRef.current?.abort();
     const controller = new AbortController();
@@ -99,13 +134,12 @@ export default function Scribble() {
           id: sessionRef.current,
           width: WIDTH,
           height: HEIGHT,
-          strokes: nextStrokes.map(roundedPoints),
+          strokes: prepareStrokesForSubmission(nextStrokes),
         }),
       });
 
       if (!response.ok) throw new Error("save failed");
       if (saveControllerRef.current !== controller) return;
-      unsavedRef.current = null;
       setStatus("saved");
     } catch {
       if (controller.signal.aborted || saveControllerRef.current !== controller) {
@@ -119,94 +153,69 @@ export default function Scribble() {
     }
   }, []);
 
-  const finishStroke = useCallback(
-    (points: Point[], keepDrawing = false): StrokeResult => {
-      const cleaned = roundedPoints(points);
-
-      if (!isAccepted(cleaned)) {
-        if (!keepDrawing) {
-          setCurrentStroke([]);
-          keyboardDrawingRef.current = false;
-          setStatus("ready");
-        }
-        return "ignored";
+  const detectFive = useCallback(
+    (points: readonly Point[]) => {
+      if (!hasFiveRef.current && hasDetectedFive(points)) {
+        setFiveDetected(true);
       }
-
-      const nextStrokes = [...strokesRef.current, cleaned];
-      strokesRef.current = nextStrokes;
-      setStrokes(nextStrokes);
-
-      if (nextStrokes.length === prompts.length) {
-        const pointerId = activePointerRef.current;
-        if (
-          pointerId !== null &&
-          surfaceRef.current?.hasPointerCapture(pointerId)
-        ) {
-          surfaceRef.current.releasePointerCapture(pointerId);
-        }
-        activePointerRef.current = null;
-        setCurrentStroke([]);
-        keyboardDrawingRef.current = false;
-        setPromptIndex(prompts.length);
-        setStatus("saving");
-        void save(nextStrokes);
-        return "complete";
-      }
-
-      setPromptIndex(nextStrokes.length);
-      if (keepDrawing) {
-        setCurrentStroke([cleaned[cleaned.length - 1]]);
-        setStatus("drawing");
-      } else {
-        setCurrentStroke([]);
-        keyboardDrawingRef.current = false;
-        setStatus("ready");
-      }
-      return "advanced";
     },
-    [save, setCurrentStroke],
+    [setFiveDetected],
   );
 
-  const pointFromClient = useCallback((clientX: number, clientY: number) => {
-    const surface = surfaceRef.current;
-    if (!surface) return null;
-    const bounds = surface.getBoundingClientRect();
-    if (bounds.width === 0 || bounds.height === 0) return null;
-    return {
-      x: clamp(((clientX - bounds.left) / bounds.width) * WIDTH, 0, WIDTH),
-      y: clamp(((clientY - bounds.top) / bounds.height) * HEIGHT, 0, HEIGHT),
-    };
-  }, []);
+  const finishStroke = useCallback(
+    (points: readonly Point[]) => {
+      const cleaned = roundedPoints(points);
+      if (isAccepted(cleaned)) {
+        detectFive(cleaned);
+        const nextStrokes = [...strokesRef.current, cleaned];
+        strokesRef.current = nextStrokes;
+        setStrokes(nextStrokes);
+      }
+
+      setCurrentStroke([]);
+      keyboardDrawingRef.current = false;
+      setStatus("ready");
+    },
+    [detectFive, setCurrentStroke],
+  );
+
+  const pointFromClient = useCallback(
+    (clientX: number, clientY: number) => {
+      const stage = stageRef.current;
+      if (!stage) return null;
+      return clientPointToCanvas(
+        clientX,
+        clientY,
+        stage.getBoundingClientRect(),
+        zoom,
+      );
+    },
+    [zoom],
+  );
 
   const appendPoint = useCallback(
-    (point: Point): StrokeResult | "drawing" => {
-      if (strokesRef.current.length >= prompts.length) return "complete";
-
+    (point: Point) => {
       const current = activeRef.current;
       const last = current.at(-1);
-      if (last && distance(last, point) < MIN_POINT_GAP) return "drawing";
+      if (last && distance(last, point) < MIN_POINT_GAP) return;
 
       const retainedPoints =
-        current.length >= 900
+        current.length >= MAX_POINTS_PER_STROKE
           ? current.filter(
               (_, index) => index % 2 === 0 || index === current.length - 1,
             )
           : current;
       const nextPoints = [...retainedPoints, point];
       setCurrentStroke(nextPoints);
-      const promptIndex = strokesRef.current.length;
-      if (hasReachedPrompt(nextPoints, promptIndex)) {
-        return finishStroke(nextPoints, true);
-      }
-      return "drawing";
+      detectFive(nextPoints);
     },
-    [finishStroke, setCurrentStroke],
+    [detectFive, setCurrentStroke],
   );
 
-  const canBegin = status === "ready";
+  const canDraw = status !== "saving" && status !== "saved";
 
   const handlePointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
-    if (!canBegin || activePointerRef.current !== null) return;
+    if (!canDraw || activePointerRef.current !== null) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
     const point = pointFromClient(event.clientX, event.clientY);
     if (!point) return;
@@ -222,18 +231,11 @@ export default function Scribble() {
     if (event.pointerId !== activePointerRef.current) return;
     event.preventDefault();
 
-    const nativeEvents = event.nativeEvent.getCoalescedEvents?.() ?? [event.nativeEvent];
+    const nativeEvents =
+      event.nativeEvent.getCoalescedEvents?.() ?? [event.nativeEvent];
     for (const nativeEvent of nativeEvents) {
       const point = pointFromClient(nativeEvent.clientX, nativeEvent.clientY);
-      if (!point) continue;
-      const result = appendPoint(point);
-      if (result === "complete") {
-        activePointerRef.current = null;
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-          event.currentTarget.releasePointerCapture(event.pointerId);
-        }
-        break;
-      }
+      if (point) appendPoint(point);
     }
   };
 
@@ -252,34 +254,35 @@ export default function Scribble() {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     activePointerRef.current = null;
-    // Lifting remains a permissive fallback for separate strokes. While the
-    // pointer stays down, prompt-aware progression happens in appendPoint.
     finishStroke(points);
   };
 
-  const cancelPointer = (event: ReactPointerEvent<SVGSVGElement>) => {
-    if (event.pointerId !== activePointerRef.current) return;
+  const cancelActiveStroke = useCallback(() => {
     activePointerRef.current = null;
     setCurrentStroke([]);
+    keyboardDrawingRef.current = false;
+    setFiveDetected(strokesRef.current.some(hasDetectedFive));
     setStatus("ready");
+  }, [setCurrentStroke, setFiveDetected]);
+
+  const cancelPointer = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (event.pointerId !== activePointerRef.current) return;
+    cancelActiveStroke();
   };
 
   const handleKeyDown = (event: KeyboardEvent<SVGSVGElement>) => {
     if (event.key === "Escape" && keyboardDrawingRef.current) {
       event.preventDefault();
-      keyboardDrawingRef.current = false;
-      setCurrentStroke([]);
-      setStatus("ready");
+      cancelActiveStroke();
       return;
     }
 
     if (event.key === "Enter") {
       event.preventDefault();
       if (keyboardDrawingRef.current) {
-        // Enter mirrors the pointer-up fallback for keyboard drawing.
         finishStroke(activeRef.current);
-      } else if (canBegin) {
-        const previous = strokes.at(-1)?.at(-1);
+      } else if (canDraw) {
+        const previous = strokesRef.current.at(-1)?.at(-1);
         const start = previous ?? { x: WIDTH * 0.76, y: HEIGHT * 0.22 };
         keyboardDrawingRef.current = true;
         setCurrentStroke([start]);
@@ -308,85 +311,182 @@ export default function Scribble() {
     });
   };
 
-  const reset = () => {
+  const clearAll = () => {
     saveControllerRef.current?.abort();
     saveControllerRef.current = null;
+
+    const pointerId = activePointerRef.current;
+    if (
+      pointerId !== null &&
+      surfaceRef.current?.hasPointerCapture(pointerId)
+    ) {
+      surfaceRef.current.releasePointerCapture(pointerId);
+    }
+
     activePointerRef.current = null;
     strokesRef.current = [];
     sessionRef.current = "";
-    unsavedRef.current = null;
     keyboardDrawingRef.current = false;
-    setPromptIndex(0);
+    setFiveDetected(false);
     setStrokes([]);
     setCurrentStroke([]);
     setStatus("ready");
   };
 
-  const retry = () => {
-    if (!unsavedRef.current) return;
+  const submit = () => {
+    if (!hasFiveRef.current || status === "saving" || status === "saved") return;
+
+    let nextStrokes = strokesRef.current;
+    if (isAccepted(activeRef.current)) {
+      const cleaned = roundedPoints(activeRef.current);
+      nextStrokes = [...nextStrokes, cleaned];
+      strokesRef.current = nextStrokes;
+      setStrokes(nextStrokes);
+    }
+    setCurrentStroke([]);
+    keyboardDrawingRef.current = false;
+    if (nextStrokes.length === 0) return;
+
+    const pointerId = activePointerRef.current;
+    if (
+      pointerId !== null &&
+      surfaceRef.current?.hasPointerCapture(pointerId)
+    ) {
+      surfaceRef.current.releasePointerCapture(pointerId);
+    }
+    activePointerRef.current = null;
     setStatus("saving");
-    void save(unsavedRef.current);
+    void save(nextStrokes);
   };
 
-  const message =
-    promptIndex < prompts.length
-      ? prompts[promptIndex]
-      : status === "saving"
-        ? "keeping…"
+  const submitLabel =
+    status === "saving"
+      ? "Submitting…"
+      : status === "saved"
+        ? "Submitted"
         : status === "error"
-          ? "couldn’t keep it."
-          : "kept.";
+          ? "Try again"
+          : "Submit";
+  const submitDisabled = !hasFive || status === "saving" || status === "saved";
+  const statusMessage =
+    status === "saving"
+      ? "Submitting your sheet."
+      : status === "saved"
+        ? "Sheet submitted."
+        : status === "error"
+          ? "Submission failed. Try again."
+          : hasFive
+            ? "Five detected. Submit available."
+            : "";
+  const viewWidth = WIDTH / zoom;
+  const viewHeight = HEIGHT / zoom;
+  const canvasViewBox = `${(WIDTH - viewWidth) / 2} ${(HEIGHT - viewHeight) / 2} ${viewWidth} ${viewHeight}`;
 
   return (
     <main className="page-shell">
-      <div className="instruction" aria-live="polite" aria-atomic="true">
-        <p key={`${promptIndex}-${status}`} className="instruction__text">
-          {message}
-        </p>
-        {status === "error" ? (
-          <button className="text-control" type="button" onClick={retry}>
-            retry
-          </button>
-        ) : null}
-        {status === "saved" ? (
-          <button className="text-control" type="button" onClick={reset}>
-            again
-          </button>
-        ) : null}
+      <div ref={stageRef} className="canvas-stage">
+        <svg
+          ref={surfaceRef}
+          className="drawing-surface"
+          viewBox={canvasViewBox}
+          preserveAspectRatio="none"
+          role="application"
+          aria-label="A4 drawing surface. Draw a five. Press Enter to begin or finish and use arrow keys to draw."
+          aria-describedby="drawing-instruction"
+          tabIndex={0}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={endPointer}
+          onPointerCancel={cancelPointer}
+          onKeyDown={handleKeyDown}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <defs>
+            <pattern
+              id="drawing-dot-grid"
+              width="16"
+              height="16"
+              patternUnits="userSpaceOnUse"
+            >
+              <circle
+                className="dot-grid"
+                cx="1"
+                cy="1"
+                r="0.8"
+                fill="currentColor"
+              />
+            </pattern>
+          </defs>
+          <rect
+            width={WIDTH}
+            height={HEIGHT}
+            fill="url(#drawing-dot-grid)"
+            pointerEvents="none"
+          />
+          {strokes.map((points, index) => (
+            <path
+              className="mark"
+              d={pathFromPoints(points)}
+              key={`${index}-${points.length}`}
+            />
+          ))}
+          {activeStroke.length > 1 ? (
+            <path className="mark" d={pathFromPoints(activeStroke)} />
+          ) : null}
+        </svg>
       </div>
 
-      {status !== "saved" ? (
-        <button className="clear-control" type="button" onClick={reset}>
-          clear
-        </button>
-      ) : null}
+      <div className="instruction">
+        <p id="drawing-instruction" className="instruction__text">
+          Draw a 5.
+        </p>
+      </div>
 
-      <svg
-        ref={surfaceRef}
-        className="drawing-surface"
-        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-        preserveAspectRatio="none"
-        role="application"
-        aria-label="Drawing surface. Keep moving as instructions change. Press Enter to begin or finish. Use arrow keys to move."
-        tabIndex={0}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={endPointer}
-        onPointerCancel={cancelPointer}
-        onKeyDown={handleKeyDown}
-        onContextMenu={(event) => event.preventDefault()}
-      >
-        {strokes.map((points, index) => (
-          <path
-            className="mark"
-            d={pathFromPoints(points)}
-            key={`${index}-${points.length}`}
-          />
-        ))}
-        {activeStroke.length > 1 ? (
-          <path className="mark" d={pathFromPoints(activeStroke)} />
-        ) : null}
-      </svg>
+      <p className="drawing-status" role="status" aria-live="polite" aria-atomic="true">
+        {statusMessage}
+      </p>
+
+      <div className="drawing-controls" role="group" aria-label="Drawing actions">
+        <button className="drawing-control" type="button" onClick={clearAll}>
+          Clear all
+        </button>
+        <button
+          className="drawing-control drawing-control--submit"
+          type="button"
+          disabled={submitDisabled}
+          onClick={submit}
+        >
+          {submitLabel}
+        </button>
+      </div>
+
+      <div className="zoom-controls" role="group" aria-label="Canvas zoom">
+        <button
+          className="zoom-control"
+          type="button"
+          aria-label="Zoom out"
+          disabled={zoomIndex === 0}
+          onClick={() => setZoomIndex((current) => Math.max(0, current - 1))}
+        >
+          −
+        </button>
+        <span className="zoom-level" aria-live="polite">
+          {Math.round(zoom * 100)}%
+        </span>
+        <button
+          className="zoom-control"
+          type="button"
+          aria-label="Zoom in"
+          disabled={zoomIndex === ZOOM_LEVELS.length - 1}
+          onClick={() =>
+            setZoomIndex((current) =>
+              Math.min(ZOOM_LEVELS.length - 1, current + 1),
+            )
+          }
+        >
+          +
+        </button>
+      </div>
     </main>
   );
 }

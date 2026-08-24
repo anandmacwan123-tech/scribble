@@ -8,6 +8,7 @@ import {
   type DrawingMetadataRow,
   type DrawingRow,
 } from "../db/drawings";
+import { distance, hasDetectedFive } from "../app/gesture";
 
 type Point = { x: number; y: number };
 type DrawingPayload = {
@@ -21,9 +22,11 @@ const A4_WIDTH = 842;
 const A4_HEIGHT = 595;
 const LEGACY_WIDTH = 1000;
 const LEGACY_HEIGHT = 700;
-const MAX_BODY_BYTES = 128 * 1024;
-// The client retains at most 900 samples for each of the five prompt stages.
-const MAX_POINTS = 4500;
+const MAX_BODY_BYTES = 384 * 1024;
+const MAX_POINTS_PER_STROKE = 900;
+const MAX_POINTS = 8000;
+const MAX_STROKES = MAX_POINTS / 2;
+const MAX_STROKE_JOIN = 60;
 const LIST_PAGE_SIZE = 100;
 const MAX_DOWNLOADS = 500;
 const MAX_ARCHIVE_INPUT_BYTES = 8 * 1024 * 1024;
@@ -89,6 +92,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function containsFive(strokes: Point[][], width: number, height: number) {
+  const normalized = strokes.map((stroke) =>
+    stroke.map(({ x, y }) => ({
+      x: (x / width) * A4_WIDTH,
+      y: (y / height) * A4_HEIGHT,
+    })),
+  );
+
+  if (normalized.some(hasDetectedFive)) return true;
+
+  let joined: Point[] = [];
+  for (const stroke of normalized) {
+    const previous = joined.at(-1);
+    if (previous && distance(previous, stroke[0]) > MAX_STROKE_JOIN) {
+      if (hasDetectedFive(joined)) return true;
+      joined = [];
+    }
+    joined.push(...stroke);
+  }
+  return hasDetectedFive(joined);
+}
+
 function validatePayload(value: unknown): DrawingPayload {
   if (!isRecord(value)) throw new RequestError("invalid drawing", 400);
   if (typeof value.id !== "string" || !UUID_PATTERN.test(value.id)) {
@@ -102,13 +127,21 @@ function validatePayload(value: unknown): DrawingPayload {
   }
   const width = value.width as number;
   const height = value.height as number;
-  if (!Array.isArray(value.strokes) || value.strokes.length !== 5) {
+  if (
+    !Array.isArray(value.strokes) ||
+    value.strokes.length < 1 ||
+    value.strokes.length > MAX_STROKES
+  ) {
     throw new RequestError("invalid drawing", 400);
   }
 
   let pointCount = 0;
   const strokes = value.strokes.map((stroke) => {
-    if (!Array.isArray(stroke) || stroke.length < 2 || stroke.length > 900) {
+    if (
+      !Array.isArray(stroke) ||
+      stroke.length < 2 ||
+      stroke.length > MAX_POINTS_PER_STROKE
+    ) {
       throw new RequestError("invalid drawing", 400);
     }
     pointCount += stroke.length;
@@ -133,6 +166,10 @@ function validatePayload(value: unknown): DrawingPayload {
       return { x, y };
     });
   });
+
+  if (!containsFive(strokes, width, height)) {
+    throw new RequestError("five not detected", 400);
+  }
 
   return {
     id: value.id,
@@ -233,7 +270,7 @@ function buildA4Svg(paths: string[]) {
   const compoundPath = paths.join(" ");
   const element = `<path d="${compoundPath}" fill="none" stroke="#171713" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>`;
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${A4_WIDTH}pt" height="${A4_HEIGHT}pt" viewBox="0 0 ${A4_WIDTH} ${A4_HEIGHT}"><title>Kept five</title>${element}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${A4_WIDTH}pt" height="${A4_HEIGHT}pt" viewBox="0 0 ${A4_WIDTH} ${A4_HEIGHT}"><title>Kept fives</title>${element}</svg>`;
 }
 
 function buildSvg(payload: DrawingPayload) {
