@@ -18,12 +18,34 @@ import {
   isAccepted,
   type Point,
 } from "./gesture";
+import { redoStroke, undoStroke } from "./history";
 
 type DrawStatus = "ready" | "drawing" | "saving" | "saved" | "error";
+type RecentDrawing = {
+  id: string;
+  createdAt: string;
+  previewUrl: string;
+};
 
 const ZOOM_LEVELS = [1, 1.25, 1.5, 2] as const;
 const MAX_SUBMISSION_POINTS = 7600;
 const MAX_POINTS_PER_STROKE = 880;
+const recentDateFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+
+async function loadRecentDrawings(signal?: AbortSignal) {
+  try {
+    const response = await fetch("/api/drawings?limit=3", { signal });
+    if (!response.ok) return null;
+    const result = (await response.json()) as { drawings?: RecentDrawing[] };
+    return Array.isArray(result.drawings) ? result.drawings.slice(0, 3) : null;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") return null;
+    return null;
+  }
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -86,18 +108,22 @@ function prepareStrokesForSubmission(strokes: readonly Point[][]) {
 export default function Scribble() {
   const [strokes, setStrokes] = useState<Point[][]>([]);
   const [activeStroke, setActiveStroke] = useState<Point[]>([]);
+  const [redoStrokes, setRedoStrokes] = useState<Point[][]>([]);
   const [hasFive, setHasFive] = useState(false);
   const [status, setStatus] = useState<DrawStatus>("ready");
   const [zoomIndex, setZoomIndex] = useState(0);
+  const [recentDrawings, setRecentDrawings] = useState<RecentDrawing[]>([]);
 
   const stageRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<SVGSVGElement>(null);
   const activeRef = useRef<Point[]>([]);
   const activePointerRef = useRef<number | null>(null);
   const strokesRef = useRef<Point[][]>([]);
+  const redoStrokesRef = useRef<Point[][]>([]);
   const hasFiveRef = useRef(false);
   const sessionRef = useRef("");
   const saveControllerRef = useRef<AbortController | null>(null);
+  const recentControllerRef = useRef<AbortController | null>(null);
   const keyboardDrawingRef = useRef(false);
 
   const zoom = ZOOM_LEVELS[zoomIndex];
@@ -112,12 +138,50 @@ export default function Scribble() {
     setHasFive(detected);
   }, []);
 
+  const setRedoHistory = useCallback((nextStrokes: Point[][]) => {
+    redoStrokesRef.current = nextStrokes;
+    setRedoStrokes(nextStrokes);
+  }, []);
+
+  const refreshRecentDrawings = useCallback(() => {
+    recentControllerRef.current?.abort();
+    const controller = new AbortController();
+    recentControllerRef.current = controller;
+
+    void loadRecentDrawings(controller.signal).then((recent) => {
+      if (recentControllerRef.current !== controller) return;
+      recentControllerRef.current = null;
+      if (recent) setRecentDrawings(recent);
+    });
+  }, []);
+
   useEffect(
     () => () => {
       saveControllerRef.current?.abort();
+      recentControllerRef.current?.abort();
+      recentControllerRef.current = null;
     },
     [],
   );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    recentControllerRef.current?.abort();
+    recentControllerRef.current = controller;
+
+    void (async () => {
+      const recent = await loadRecentDrawings(controller.signal);
+      if (recentControllerRef.current !== controller) return;
+      recentControllerRef.current = null;
+      if (recent) setRecentDrawings(recent);
+    })();
+    return () => {
+      controller.abort();
+      if (recentControllerRef.current === controller) {
+        recentControllerRef.current = null;
+      }
+    };
+  }, []);
 
   const save = useCallback(async (nextStrokes: Point[][]) => {
     if (!sessionRef.current) sessionRef.current = crypto.randomUUID();
@@ -141,6 +205,7 @@ export default function Scribble() {
       if (!response.ok) throw new Error("save failed");
       if (saveControllerRef.current !== controller) return;
       setStatus("saved");
+      refreshRecentDrawings();
     } catch {
       if (controller.signal.aborted || saveControllerRef.current !== controller) {
         return;
@@ -151,7 +216,7 @@ export default function Scribble() {
         saveControllerRef.current = null;
       }
     }
-  }, []);
+  }, [refreshRecentDrawings]);
 
   const detectFive = useCallback(
     (points: readonly Point[]) => {
@@ -170,13 +235,14 @@ export default function Scribble() {
         const nextStrokes = [...strokesRef.current, cleaned];
         strokesRef.current = nextStrokes;
         setStrokes(nextStrokes);
+        setRedoHistory([]);
       }
 
       setCurrentStroke([]);
       keyboardDrawingRef.current = false;
       setStatus("ready");
     },
-    [detectFive, setCurrentStroke],
+    [detectFive, setCurrentStroke, setRedoHistory],
   );
 
   const pointFromClient = useCallback(
@@ -329,7 +395,35 @@ export default function Scribble() {
     keyboardDrawingRef.current = false;
     setFiveDetected(false);
     setStrokes([]);
+    setRedoHistory([]);
     setCurrentStroke([]);
+    setStatus("ready");
+  };
+
+  const historyAvailable =
+    (status === "ready" || status === "error") && activeStroke.length === 0;
+
+  const undo = () => {
+    if (!historyAvailable || activeRef.current.length !== 0) return;
+    const next = undoStroke(strokesRef.current, redoStrokesRef.current);
+    if (!next) return;
+
+    strokesRef.current = next.strokes;
+    setStrokes(next.strokes);
+    setRedoHistory(next.redoStrokes);
+    setFiveDetected(next.strokes.some(hasDetectedFive));
+    setStatus("ready");
+  };
+
+  const redo = () => {
+    if (!historyAvailable || activeRef.current.length !== 0) return;
+    const next = redoStroke(strokesRef.current, redoStrokesRef.current);
+    if (!next) return;
+
+    strokesRef.current = next.strokes;
+    setStrokes(next.strokes);
+    setRedoHistory(next.redoStrokes);
+    setFiveDetected(next.strokes.some(hasDetectedFive));
     setStatus("ready");
   };
 
@@ -342,6 +436,7 @@ export default function Scribble() {
       nextStrokes = [...nextStrokes, cleaned];
       strokesRef.current = nextStrokes;
       setStrokes(nextStrokes);
+      setRedoHistory([]);
     }
     setCurrentStroke([]);
     keyboardDrawingRef.current = false;
@@ -447,6 +542,22 @@ export default function Scribble() {
       </p>
 
       <div className="drawing-controls" role="group" aria-label="Drawing actions">
+        <button
+          className="drawing-control"
+          type="button"
+          disabled={!historyAvailable || strokes.length === 0}
+          onClick={undo}
+        >
+          Undo
+        </button>
+        <button
+          className="drawing-control"
+          type="button"
+          disabled={!historyAvailable || redoStrokes.length === 0}
+          onClick={redo}
+        >
+          Redo
+        </button>
         <button className="drawing-control" type="button" onClick={clearAll}>
           Clear all
         </button>
@@ -487,6 +598,30 @@ export default function Scribble() {
           +
         </button>
       </div>
+
+      {recentDrawings.length > 0 ? (
+        <aside className="recent-submissions" aria-label="Recent submissions">
+          {recentDrawings.map((drawing) => {
+            const label = recentDateFormatter.format(new Date(drawing.createdAt));
+            return (
+              <a
+                className="recent-submission"
+                href="/5"
+                key={drawing.id}
+                aria-label={`Open saved drawings; recent submission saved ${label}`}
+              >
+                {/* Dynamic Worker SVGs are already canonical and should not pass through image optimization. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={drawing.previewUrl}
+                  alt=""
+                  draggable="false"
+                />
+              </a>
+            );
+          })}
+        </aside>
+      ) : null}
     </main>
   );
 }

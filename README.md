@@ -1,10 +1,12 @@
 # Scribble
 
-A quiet A4-landscape page for drawing fives. Recognition runs continuously and
+A quiet A4-portrait page for drawing fives. Recognition runs continuously and
 unlocks an explicit Submit action after a five is detected, while the page stays
-open for more marks. The dot grid and zoom are view-only; submitted sheets are
-stored in Cloudflare D1 as one canonical 1 pt SVG path. `/5` lists every kept
-sheet with its timestamp and bulk export.
+open for more marks with Undo, Redo, and Clear all controls. The 10% dot grid and
+zoom are view-only; submitted sheets are stored in Cloudflare D1 as one canonical
+1 pt SVG path. The drawing page previews the three newest submissions at its
+right edge. `/5` lists every kept sheet with its timestamp, bulk export, and a
+delete-all action that requires the exact confirmation text `CONFIRM`.
 
 ## Local development
 

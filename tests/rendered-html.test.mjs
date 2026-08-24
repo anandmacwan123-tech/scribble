@@ -32,8 +32,12 @@ function makeEnv({ onRun = () => {}, onAll, onFirst, onLimit } = {}) {
             return statement;
           },
           async run() {
-            onRun({ sql, values });
-            return { success: true, meta: { changes: 1 } };
+            return (
+              (await onRun({ sql, values })) ?? {
+                success: true,
+                meta: { changes: 1 },
+              }
+            );
           },
           async all() {
             return {
@@ -59,28 +63,28 @@ function makeEnv({ onRun = () => {}, onAll, onFirst, onLimit } = {}) {
 function drawingPayload() {
   return {
     id: "11111111-1111-4111-8111-111111111111",
-    width: 842,
-    height: 595,
+    width: 595,
+    height: 842,
     strokes: [
       [
-        { x: 800, y: 120 },
-        { x: 500, y: 120 },
+        { x: 500, y: 100 },
+        { x: 430, y: 100 },
       ],
       [
-        { x: 500, y: 120 },
-        { x: 500, y: 320 },
+        { x: 430, y: 100 },
+        { x: 430, y: 190 },
       ],
       [
-        { x: 500, y: 320 },
-        { x: 760, y: 320 },
+        { x: 430, y: 190 },
+        { x: 500, y: 190 },
       ],
       [
-        { x: 760, y: 320 },
-        { x: 790, y: 470 },
+        { x: 500, y: 190 },
+        { x: 500, y: 280 },
       ],
       [
-        { x: 790, y: 470 },
-        { x: 520, y: 560 },
+        { x: 500, y: 280 },
+        { x: 430, y: 280 },
       ],
     ],
   };
@@ -100,6 +104,8 @@ test("renders the quiet drawing surface with the supplied typeface", async () =>
   const html = await response.text();
   assert.match(html, /<title>Draw a 5<\/title>/i);
   assert.match(html, /Draw a 5\./);
+  assert.match(html, /<button[^>]*disabled[^>]*>Undo<\/button>/);
+  assert.match(html, /<button[^>]*disabled[^>]*>Redo<\/button>/);
   assert.match(html, />Clear all<\/button>/);
   assert.match(html, /<button[^>]*disabled[^>]*>Submit<\/button>/);
   assert.doesNotMatch(html, /Begin high|Travel left|fall straight|Sweep back/i);
@@ -112,10 +118,13 @@ test("renders the quiet drawing surface with the supplied typeface", async () =>
   assert.match(css, /Futura-Regular\.woff2/);
   assert.doesNotMatch(css, /Futura-Bold\.woff2|font-weight:\s*(?:[5-9]00|bold)/);
   assert.match(css, /\.instruction\s*{[^}]*bottom:[^}]*left:\s*50%[^}]*text-align:\s*center/s);
-  assert.match(css, /aspect-ratio:\s*842\s*\/\s*595/);
-  assert.match(css, /\.canvas-stage\s*{[^}]*100vw\s*-\s*32px[^}]*141\.51260504dvh[^}]*box-shadow:\s*0 0 0 1pt rgba\(23, 23, 19, 0\.05\)/s);
-  assert.match(css, /@media \(max-width:\s*600px\)[\s\S]*?\.canvas-stage\s*{[^}]*top:\s*calc\(50%\s*-\s*34px\)[^}]*141\.51260504dvh\s*-\s*288\.686px/s);
-  assert.match(css, /\.dot-grid\s*{[^}]*opacity:\s*0\.05/s);
+  assert.match(css, /aspect-ratio:\s*595\s*\/\s*842/);
+  assert.match(css, /\.canvas-stage\s*{[^}]*--canvas-inline-width:\s*calc\(100vw\s*-\s*32px\)[^}]*70\.66508314dvh[^}]*box-shadow:\s*0 0 0 1pt rgba\(23, 23, 19, 0\.05\)/s);
+  assert.match(css, /@media \(max-width:\s*600px\)[\s\S]*?\.canvas-stage\s*{[^}]*top:\s*calc\(50%\s*-\s*34px\)[^}]*70\.66508314dvh\s*-\s*144\.157px/s);
+  assert.match(css, /\.dot-grid\s*{[^}]*opacity:\s*0\.1/s);
+  assert.match(css, /\.recent-submissions\s*{[^}]*right:[^}]*width:[^}]*transform:\s*translateY\(-50%\)/s);
+  assert.match(css, /\.recent-submission\s*{[^}]*aspect-ratio:\s*595\s*\/\s*842/s);
+  assert.match(css, /@media \(max-width:\s*700px\), \(max-aspect-ratio:\s*3\s*\/\s*4\)[\s\S]*?--canvas-inline-width:\s*calc\(100vw\s*-\s*104px\)/s);
   assert.match(css, /vector-effect:\s*non-scaling-stroke/);
   assert.match(gesture, /MIN_STROKE_TRAVEL = 8/);
   assert.match(gesture, /function hasReachedPrompt/);
@@ -125,6 +134,15 @@ test("renders the quiet drawing surface with the supplied typeface", async () =>
   assert.doesNotMatch(client, /const prompts|eraser/i);
   assert.match(client, /Draw a 5\./);
   assert.match(client, /Clear all/);
+  assert.match(client, /Undo/);
+  assert.match(client, /Redo/);
+  assert.match(client, /undoStroke\(strokesRef\.current, redoStrokesRef\.current\)/);
+  assert.match(client, /redoStroke\(strokesRef\.current, redoStrokesRef\.current\)/);
+  assert.match(client, /fetch\("\/api\/drawings\?limit=3"/);
+  assert.match(client, /result\.drawings\.slice\(0, 3\)/);
+  assert.match(client, /recentControllerRef\.current\?\.abort\(\)/);
+  assert.match(client, /recentControllerRef\.current !== controller/);
+  assert.match(client, /aria-label="Recent submissions"/);
   assert.match(client, /disabled={submitDisabled}/);
   assert.match(client, /const canvasViewBox/);
   assert.match(client, /Five detected\. Submit available\./);
@@ -132,6 +150,12 @@ test("renders the quiet drawing surface with the supplied typeface", async () =>
   assert.match(gallery, /const MAX_BULK_SELECTION = 500;/);
   assert.match(gallery, /toggleAll|allSelected/);
   assert.match(gallery, /while \(cursor\)/);
+  assert.match(gallery, /\/api\/admin\/drawings/);
+  assert.match(gallery, /confirmation !== "CONFIRM"/);
+  assert.match(gallery, /Type CONFIRM to continue\./);
+  assert.match(gallery, /<dialog/);
+  assert.match(gallery, /deleteFocusTargetRef\.current = "status"/);
+  assert.match(gallery, /deleteStatusRef\.current\?\.focus\(\)/);
   assert.doesNotMatch(client, /failedAttempts|previousEnd|mark--rejected/);
   await access(new URL("../public/fonts/Futura-Regular.woff2", import.meta.url));
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
@@ -150,6 +174,8 @@ test("renders the saved drawing gallery", async () => {
   assert.match(html, /<title>Kept<\/title>/i);
   assert.match(html, />kept\.<\/h1>/i);
   assert.match(html, /download/i);
+  assert.match(html, /delete all/i);
+  assert.match(html, /Type CONFIRM to continue\./);
 });
 
 test("constructs canonical SVG on the server and writes it to D1", async () => {
@@ -176,14 +202,14 @@ test("constructs canonical SVG on the server and writes it to D1", async () => {
   assert.doesNotMatch(write.sql, /DO UPDATE/);
   assert.equal(write.values[0], drawingPayload().id);
   assert.match(write.values[1], /^<svg xmlns=/);
-  assert.match(write.values[1], /width="842pt"/);
-  assert.match(write.values[1], /height="595pt"/);
-  assert.match(write.values[1], /viewBox="0 0 842 595"/);
+  assert.match(write.values[1], /width="595pt"/);
+  assert.match(write.values[1], /height="842pt"/);
+  assert.match(write.values[1], /viewBox="0 0 595 842"/);
   assert.match(write.values[1], /stroke-width="1"/);
   assert.equal((write.values[1].match(/<path /g) ?? []).length, 1);
   assert.equal((write.values[1].match(/\bM /g) ?? []).length, 5);
-  assert.equal(write.values[2], 842);
-  assert.equal(write.values[3], 595);
+  assert.equal(write.values[2], 595);
+  assert.equal(write.values[3], 842);
   assert.doesNotMatch(write.values[1], /<script|onload=/i);
   assert.doesNotMatch(write.values[1], /<pattern|<circle|dot-grid|zoom/i);
 });
@@ -195,12 +221,12 @@ test("accepts a multi-stroke A4 sheet and keeps every stroke in one SVG path", a
     drawingPayload().strokes.flat(),
     [
         { x: 0, y: 0 },
-        { x: 842, y: 595 },
+        { x: 595, y: 842 },
     ],
     ...Array.from({ length: 10 }, (_, index) => {
     const column = index % 4;
     const row = Math.floor(index / 4);
-    const x = 80 + column * 180;
+    const x = 80 + column * 120;
     const y = 70 + row * 170;
     return [
       { x, y },
@@ -228,10 +254,10 @@ test("accepts a multi-stroke A4 sheet and keeps every stroke in one SVG path", a
   assert.ok(write);
   assert.equal((write.values[1].match(/<path /g) ?? []).length, 1);
   assert.equal((write.values[1].match(/\bM /g) ?? []).length, 12);
-  assert.match(write.values[1], /width="842pt"/);
-  assert.match(write.values[1], /height="595pt"/);
+  assert.match(write.values[1], /width="595pt"/);
+  assert.match(write.values[1], /height="842pt"/);
   assert.match(write.values[1], /stroke-width="1"/);
-  assert.match(write.values[1], /M 0 0 L 842 595/);
+  assert.match(write.values[1], /M 0 0 L 595 842/);
   assert.doesNotMatch(write.values[1], /<pattern|<circle|dot-grid|zoom/i);
 });
 
@@ -242,8 +268,8 @@ test("keeps accepting a legacy staged five after server-side recognition", async
   payload.height = 700;
   payload.strokes = payload.strokes.map((stroke) =>
     stroke.map(({ x, y }) => ({
-      x: (x / 842) * 1000,
-      y: (y / 595) * 700,
+      x: (x / 595) * 1000,
+      y: (y / 842) * 700,
     })),
   );
 
@@ -264,8 +290,43 @@ test("keeps accepting a legacy staged five after server-side recognition", async
 
   assert.equal(response.status, 201);
   assert.ok(write);
-  assert.equal(write.values[2], 842);
-  assert.equal(write.values[3], 595);
+  assert.equal(write.values[2], 595);
+  assert.equal(write.values[3], 842);
+  assert.match(write.values[1], /stroke-width="1"/);
+});
+
+test("keeps accepting the previous landscape A4 canvas", async () => {
+  const worker = await loadWorker();
+  const payload = drawingPayload();
+  payload.width = 842;
+  payload.height = 595;
+  payload.strokes = payload.strokes.map((stroke) =>
+    stroke.map(({ x, y }) => ({
+      x: (x / 595) * 842,
+      y: (y / 842) * 595,
+    })),
+  );
+
+  let write;
+  const response = await worker.fetch(
+    new Request("http://localhost/api/drawings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+    makeEnv({
+      onRun(value) {
+        write = value;
+      },
+    }),
+    executionContext(),
+  );
+
+  assert.equal(response.status, 201);
+  assert.ok(write);
+  assert.equal(write.values[2], 595);
+  assert.equal(write.values[3], 842);
+  assert.match(write.values[1], /viewBox="0 0 595 842"/);
   assert.match(write.values[1], /stroke-width="1"/);
 });
 
@@ -275,7 +336,7 @@ test("rejects a sheet without a detected five before touching D1", async () => {
   payload.strokes = [
     [
       { x: 100, y: 100 },
-      { x: 700, y: 100 },
+      { x: 550, y: 100 },
     ],
   ];
   let writes = 0;
@@ -402,7 +463,13 @@ test("serves only canonical stored SVG with restrictive headers", async () => {
   );
 
   assert.equal(response.status, 200);
-  assert.equal(await response.text(), svg);
+  const canonical = await response.text();
+  assert.notEqual(canonical, svg);
+  assert.match(canonical, /width="595pt"/);
+  assert.match(canonical, /height="842pt"/);
+  assert.match(canonical, /viewBox="0 0 595 842"/);
+  assert.match(canonical, /stroke-width="1"/);
+  assert.equal((canonical.match(/<path /g) ?? []).length, 1);
   assert.match(response.headers.get("content-type") ?? "", /^image\/svg\+xml/);
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
   assert.equal(response.headers.get("cross-origin-resource-policy"), "same-origin");
@@ -444,9 +511,9 @@ test("downloads selected drawings as a ZIP", async () => {
   assert.ok(Object.keys(files).some((name) => name.includes(second)));
   for (const contents of Object.values(files)) {
     const svg = strFromU8(contents);
-    assert.match(svg, /width="842pt"/);
-    assert.match(svg, /height="595pt"/);
-    assert.match(svg, /viewBox="0 0 842 595"/);
+    assert.match(svg, /width="595pt"/);
+    assert.match(svg, /height="842pt"/);
+    assert.match(svg, /viewBox="0 0 595 842"/);
     assert.match(svg, /stroke-width="1"/);
     assert.equal((svg.match(/<path /g) ?? []).length, 1);
   }
@@ -477,6 +544,136 @@ test("rate limits bulk archives before querying D1", async () => {
   assert.equal(response.status, 429);
   assert.equal(response.headers.get("retry-after"), "60");
   assert.equal(reads, 0);
+});
+
+test("deletes every response only after exact same-origin confirmation", async () => {
+  const worker = await loadWorker();
+  let deletion;
+  const response = await worker.fetch(
+    new Request("http://localhost/api/admin/drawings", {
+      method: "DELETE",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://localhost",
+        "sec-fetch-site": "same-origin",
+      },
+      body: JSON.stringify({ confirmation: "CONFIRM" }),
+    }),
+    makeEnv({
+      onRun(value) {
+        deletion = value;
+        return { success: true, meta: { changes: 7 } };
+      },
+    }),
+    executionContext(),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { deleted: 7 });
+  assert.ok(deletion);
+  assert.equal(deletion.sql, "DELETE FROM drawings");
+  assert.deepEqual(deletion.values, []);
+});
+
+test("rejects inexact delete confirmations before touching D1", async () => {
+  const worker = await loadWorker();
+  const bodies = [
+    { confirmation: "confirm" },
+    { confirmation: " CONFIRM " },
+    {},
+    { confirmation: "CONFIRM", extra: true },
+  ];
+
+  for (const body of bodies) {
+    let writes = 0;
+    const response = await worker.fetch(
+      new Request("http://localhost/api/admin/drawings", {
+        method: "DELETE",
+        headers: {
+          "content-type": "application/json",
+          origin: "http://localhost",
+          "sec-fetch-site": "same-origin",
+        },
+        body: JSON.stringify(body),
+      }),
+      makeEnv({
+        onRun() {
+          writes += 1;
+        },
+      }),
+      executionContext(),
+    );
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: "invalid confirmation" });
+    assert.equal(writes, 0);
+  }
+});
+
+test("rejects cross-site deletion and rate limits before touching D1", async () => {
+  const worker = await loadWorker();
+  let writes = 0;
+  const crossSite = await worker.fetch(
+    new Request("http://localhost/api/admin/drawings", {
+      method: "DELETE",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://example.com",
+        "sec-fetch-site": "cross-site",
+      },
+      body: JSON.stringify({ confirmation: "CONFIRM" }),
+    }),
+    makeEnv({
+      onRun() {
+        writes += 1;
+      },
+    }),
+    executionContext(),
+  );
+  const limited = await worker.fetch(
+    new Request("http://localhost/api/admin/drawings", {
+      method: "DELETE",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://localhost",
+        "sec-fetch-site": "same-origin",
+      },
+      body: JSON.stringify({ confirmation: "CONFIRM" }),
+    }),
+    makeEnv({
+      onLimit: async () => false,
+      onRun() {
+        writes += 1;
+      },
+    }),
+    executionContext(),
+  );
+
+  assert.equal(crossSite.status, 403);
+  assert.equal(limited.status, 429);
+  assert.equal(limited.headers.get("retry-after"), "60");
+  assert.equal(writes, 0);
+});
+
+test("keeps deletion failures generic and leaves success reporting to D1", async () => {
+  const worker = await loadWorker();
+  const response = await worker.fetch(
+    new Request("http://localhost/api/admin/drawings", {
+      method: "DELETE",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://localhost",
+      },
+      body: JSON.stringify({ confirmation: "CONFIRM" }),
+    }),
+    makeEnv({
+      onRun: async () => ({ success: false, meta: { changes: 0 } }),
+    }),
+    executionContext(),
+  );
+
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "unable to complete request" });
 });
 
 test("rejects malformed gallery cursors and selections", async () => {

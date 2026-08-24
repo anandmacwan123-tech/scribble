@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Drawing = {
   id: string;
@@ -36,6 +36,16 @@ export default function Gallery() {
   );
   const [downloading, setDownloading] = useState(false);
   const [downloadFailed, setDownloadFailed] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [confirmation, setConfirmation] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [deletedCount, setDeletedCount] = useState<number | null>(null);
+  const deleteDialogRef = useRef<HTMLDialogElement>(null);
+  const deleteInputRef = useRef<HTMLInputElement>(null);
+  const deleteTriggerRef = useRef<HTMLButtonElement>(null);
+  const deleteStatusRef = useRef<HTMLParagraphElement>(null);
+  const deleteFocusTargetRef = useRef<"trigger" | "status">("trigger");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -67,6 +77,25 @@ export default function Gallery() {
 
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    const dialog = deleteDialogRef.current;
+    if (!dialog) return;
+
+    if (deleteOpen && !dialog.open) {
+      dialog.showModal();
+      deleteInputRef.current?.focus();
+    } else if (!deleteOpen && dialog.open) {
+      dialog.close();
+      window.requestAnimationFrame(() => {
+        if (deleteFocusTargetRef.current === "status") {
+          deleteStatusRef.current?.focus();
+        } else {
+          deleteTriggerRef.current?.focus();
+        }
+      });
+    }
+  }, [deleteOpen]);
 
   const selectedIds = useMemo(
     () => drawings.filter(({ id }) => selected.has(id)).map(({ id }) => id),
@@ -126,10 +155,59 @@ export default function Gallery() {
     }
   };
 
+  const openDeleteDialog = () => {
+    deleteFocusTargetRef.current = "trigger";
+    setConfirmation("");
+    setDeleteError("");
+    setDeleteOpen(true);
+  };
+
+  const closeDeleteDialog = () => {
+    if (deleting) return;
+    setDeleteOpen(false);
+    setConfirmation("");
+    setDeleteError("");
+  };
+
+  const deleteAll = async () => {
+    if (confirmation !== "CONFIRM" || deleting) return;
+    setDeleting(true);
+    setDeleteError("");
+
+    try {
+      const response = await fetch("/api/admin/drawings", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ confirmation }),
+      });
+      if (!response.ok) {
+        setDeleteError(
+          response.status === 429
+            ? "Slow down and try again in a minute."
+            : "Couldn’t delete the responses. Try again.",
+        );
+        return;
+      }
+
+      const result = (await response.json()) as { deleted: number };
+      setDrawings([]);
+      setSelected(new Set());
+      setDeletedCount(result.deleted);
+      setStatus("ready");
+      deleteFocusTargetRef.current = "status";
+      setDeleteOpen(false);
+      setConfirmation("");
+    } catch {
+      setDeleteError("Couldn’t delete the responses. Try again.");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <main
       className="gallery-page"
-      aria-busy={status === "loading" || downloading}
+      aria-busy={status === "loading" || downloading || deleting}
     >
       <nav className="gallery-nav" aria-label="Gallery controls">
         {/* A plain document navigation avoids retaining gallery selection state. */}
@@ -166,6 +244,20 @@ export default function Gallery() {
                 ? `download · ${selectedIds.length}`
                 : "download"}
           </button>
+          <button
+            ref={deleteTriggerRef}
+            className="gallery-control"
+            type="button"
+            disabled={
+              status !== "ready" ||
+              drawings.length === 0 ||
+              downloading ||
+              deleting
+            }
+            onClick={openDeleteDialog}
+          >
+            delete all
+          </button>
         </div>
       </nav>
 
@@ -181,6 +273,17 @@ export default function Gallery() {
       ) : null}
       {downloadFailed ? (
         <p className="gallery-state">couldn’t prepare.</p>
+      ) : null}
+      {deletedCount !== null ? (
+        <p
+          ref={deleteStatusRef}
+          className="gallery-state"
+          role="status"
+          aria-live="polite"
+          tabIndex={-1}
+        >
+          {deletedCount} {deletedCount === 1 ? "response" : "responses"} deleted.
+        </p>
       ) : null}
       {status === "ready" && drawings.length > MAX_BULK_SELECTION ? (
         <p className="gallery-state">{MAX_BULK_SELECTION} per download.</p>
@@ -227,6 +330,63 @@ export default function Gallery() {
           })}
         </ul>
       ) : null}
+
+      <dialog
+        ref={deleteDialogRef}
+        className="delete-dialog"
+        aria-labelledby="delete-title"
+        aria-describedby="delete-description"
+        onCancel={(event) => {
+          event.preventDefault();
+          closeDeleteDialog();
+        }}
+        onClose={() => {
+          setDeleteOpen(false);
+          setConfirmation("");
+          setDeleteError("");
+        }}
+      >
+        <h2 id="delete-title">Delete all responses?</h2>
+        <p id="delete-description">
+          This permanently deletes every saved response. Type CONFIRM to continue.
+        </p>
+        <label className="delete-label">
+          Type CONFIRM
+          <input
+            ref={deleteInputRef}
+            className="delete-input"
+            type="text"
+            value={confirmation}
+            autoComplete="off"
+            spellCheck={false}
+            disabled={deleting}
+            onChange={(event) => setConfirmation(event.target.value)}
+          />
+        </label>
+        {deleteError ? (
+          <p className="delete-error" role="alert">
+            {deleteError}
+          </p>
+        ) : null}
+        <div className="delete-dialog-actions">
+          <button
+            className="gallery-control"
+            type="button"
+            disabled={deleting}
+            onClick={closeDeleteDialog}
+          >
+            Cancel
+          </button>
+          <button
+            className="gallery-control"
+            type="button"
+            disabled={confirmation !== "CONFIRM" || deleting}
+            onClick={deleteAll}
+          >
+            {deleting ? "Deleting…" : "Delete all"}
+          </button>
+        </div>
+      </dialog>
     </main>
   );
 }

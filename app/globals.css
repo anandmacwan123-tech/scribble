@@ -30,7 +30,8 @@ body {
 }
 
 body,
-button {
+button,
+input {
   font-family: "Futura", Arial, sans-serif;
   font-style: normal;
   font-weight: 400;
@@ -47,13 +48,14 @@ button {
 }
 
 .canvas-stage {
+  --canvas-inline-width: calc(100vw - 32px);
   position: fixed;
   z-index: 1;
   top: calc(50% - 60px);
   left: 50%;
-  width: min(calc(100vw - 32px), calc(141.51260504vh - 215.898px));
-  width: min(calc(100vw - 32px), calc(141.51260504dvh - 215.898px));
-  aspect-ratio: 842 / 595;
+  width: min(var(--canvas-inline-width), calc(70.66508314vh - 107.411px));
+  width: min(var(--canvas-inline-width), calc(70.66508314dvh - 107.411px));
+  aspect-ratio: 595 / 842;
   overflow: hidden;
   background-color: var(--paper);
   box-shadow: 0 0 0 1pt rgba(23, 23, 19, 0.05);
@@ -170,6 +172,44 @@ button {
   pointer-events: none;
 }
 
+.recent-submissions {
+  position: fixed;
+  z-index: 3;
+  top: 50%;
+  right: clamp(8px, 2vw, 24px);
+  display: grid;
+  width: clamp(46px, 4.5vw, 64px);
+  gap: 8px;
+  transform: translateY(-50%);
+}
+
+.recent-submission {
+  display: block;
+  overflow: hidden;
+  aspect-ratio: 595 / 842;
+  background: rgba(255, 255, 255, 0.24);
+  box-shadow: 0 0 0 1pt rgba(23, 23, 19, 0.05);
+  opacity: 0.64;
+  transition: opacity 140ms ease;
+}
+
+.recent-submission:hover,
+.recent-submission:focus-visible {
+  opacity: 1;
+}
+
+.recent-submission:focus-visible {
+  outline: 1px solid var(--ink);
+  outline-offset: 3px;
+}
+
+.recent-submission img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 .drawing-control:hover:not(:disabled):not([aria-disabled="true"]),
 .drawing-control:focus-visible:not(:disabled):not([aria-disabled="true"]),
 .zoom-control:hover:not(:disabled),
@@ -191,7 +231,7 @@ button {
   display: block;
   width: 100%;
   height: 100%;
-  aspect-ratio: 842 / 595;
+  aspect-ratio: 595 / 842;
   background: transparent;
   transform: translate(-50%, -50%);
   transform-origin: center;
@@ -208,7 +248,7 @@ button {
 
 .dot-grid {
   color: var(--ink);
-  opacity: 0.05;
+  opacity: 0.1;
   pointer-events: none;
 }
 
@@ -315,7 +355,7 @@ button {
 
 .gallery-preview {
   display: grid;
-  aspect-ratio: 842 / 595;
+  aspect-ratio: 595 / 842;
   place-items: center;
   border: 1px solid transparent;
   background: rgba(255, 255, 255, 0.24);
@@ -378,6 +418,76 @@ button {
   margin-top: clamp(36px, 5vw, 72px);
 }
 
+.delete-dialog {
+  width: min(420px, 100%);
+  max-height: calc(100dvh - 48px);
+  padding: clamp(24px, 4vw, 36px);
+  border: 1pt solid rgba(23, 23, 19, 0.1);
+  background: var(--paper);
+  color: var(--ink);
+  overflow-y: auto;
+}
+
+.delete-dialog::backdrop {
+  background: rgba(242, 240, 234, 0.94);
+}
+
+.delete-dialog h2,
+.delete-dialog p {
+  margin: 0;
+  font-weight: 400;
+}
+
+.delete-dialog h2 {
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.delete-dialog p {
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.delete-label {
+  display: grid;
+  gap: 8px;
+  margin-top: 24px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.delete-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid rgba(23, 23, 19, 0.18);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  outline: none;
+}
+
+.delete-input:focus-visible {
+  border-color: var(--ink);
+}
+
+.delete-error {
+  color: var(--ink) !important;
+}
+
+.delete-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+  margin-top: 20px;
+}
+
 @keyframes appear {
   from {
     opacity: 0;
@@ -389,11 +499,24 @@ button {
   }
 }
 
+@media (max-width: 700px), (max-aspect-ratio: 3 / 4) {
+  .canvas-stage {
+    --canvas-inline-width: calc(100vw - 104px);
+    left: calc(50% - 34px);
+  }
+
+  .recent-submissions {
+    right: 8px;
+    width: 44px;
+    gap: 6px;
+  }
+}
+
 @media (max-width: 600px) {
   .canvas-stage {
     top: calc(50% - 34px);
-    width: min(calc(100vw - 32px), calc(141.51260504vh - 288.686px));
-    width: min(calc(100vw - 32px), calc(141.51260504dvh - 288.686px));
+    width: min(var(--canvas-inline-width), calc(70.66508314vh - 144.157px));
+    width: min(var(--canvas-inline-width), calc(70.66508314dvh - 144.157px));
   }
 
   .instruction {

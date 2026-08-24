@@ -6,8 +6,8 @@ export type CanvasBounds = {
   height: number;
 };
 
-export const CANVAS_WIDTH = 842;
-export const CANVAS_HEIGHT = 595;
+export const CANVAS_WIDTH = 595;
+export const CANVAS_HEIGHT = 842;
 export const MIN_POINT_GAP = 2.5;
 export const MIN_STROKE_TRAVEL = 8;
 export const FIVE_STAGE_COUNT = 5;

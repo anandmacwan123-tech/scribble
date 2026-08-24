@@ -1,6 +1,7 @@
 import handler from "vinext/server/app-router-entry";
 import { zipSync } from "fflate";
 import {
+  deleteAllDrawings,
   findDrawingById,
   findDrawingsByIds,
   listDrawingMetadata,
@@ -18,8 +19,10 @@ type DrawingPayload = {
   strokes: Point[][];
 };
 
-const A4_WIDTH = 842;
-const A4_HEIGHT = 595;
+const A4_WIDTH = 595;
+const A4_HEIGHT = 842;
+const PREVIOUS_A4_WIDTH = 842;
+const PREVIOUS_A4_HEIGHT = 595;
 const LEGACY_WIDTH = 1000;
 const LEGACY_HEIGHT = 700;
 const MAX_BODY_BYTES = 384 * 1024;
@@ -120,9 +123,11 @@ function validatePayload(value: unknown): DrawingPayload {
     throw new RequestError("invalid drawing", 400);
   }
   const usesA4Canvas = value.width === A4_WIDTH && value.height === A4_HEIGHT;
+  const usesPreviousA4Canvas =
+    value.width === PREVIOUS_A4_WIDTH && value.height === PREVIOUS_A4_HEIGHT;
   const usesLegacyCanvas =
     value.width === LEGACY_WIDTH && value.height === LEGACY_HEIGHT;
-  if (!usesA4Canvas && !usesLegacyCanvas) {
+  if (!usesA4Canvas && !usesPreviousA4Canvas && !usesLegacyCanvas) {
     throw new RequestError("invalid drawing", 400);
   }
   const width = value.width as number;
@@ -197,6 +202,26 @@ function validateDownload(value: unknown) {
     throw new RequestError("invalid selection", 400);
   }
   return ids;
+}
+
+function validateDeleteAll(value: unknown) {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).length !== 1 ||
+    value.confirmation !== "CONFIRM"
+  ) {
+    throw new RequestError("invalid confirmation", 400);
+  }
+}
+
+function requireSameOrigin(request: Request, url: URL) {
+  const fetchSite = request.headers.get("sec-fetch-site");
+  if (
+    request.headers.get("origin") !== url.origin ||
+    (fetchSite !== null && fetchSite !== "same-origin")
+  ) {
+    throw new RequestError("forbidden", 403);
+  }
 }
 
 function parseCursor(value: string | null) {
@@ -397,7 +422,7 @@ async function handleDrawingSvg(
   if (!drawing) return json({ error: "not found" }, 404);
 
   const attachment = url.searchParams.get("download") === "1";
-  const svg = attachment ? buildDownloadSvg(drawing) : drawing.svg;
+  const svg = buildDownloadSvg(drawing);
   const headers = {
     "cache-control": "no-store",
     "content-disposition": `${attachment ? "attachment" : "inline"}; filename="${drawingName(drawing)}"`,
@@ -459,8 +484,45 @@ async function handleDrawingDownload(request: Request, env: Env) {
   });
 }
 
+async function handleDeleteAllDrawings(
+  request: Request,
+  url: URL,
+  env: Env,
+) {
+  if (request.method !== "DELETE") {
+    return json({ error: "method not allowed" }, 405, { allow: "DELETE" });
+  }
+
+  requireSameOrigin(request, url);
+
+  const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
+  if (!contentType.startsWith("application/json")) {
+    return json({ error: "unsupported content type" }, 415);
+  }
+
+  const actor = request.headers.get("cf-connecting-ip") ?? "unknown";
+  const { success } = await env.SUBMISSION_RATE_LIMITER.limit({
+    key: `delete-all:${actor}`,
+  });
+  if (!success) {
+    return json({ error: "slow down" }, 429, { "retry-after": "60" });
+  }
+
+  validateDeleteAll(await readBoundedJson(request));
+  const result = await deleteAllDrawings(env.DB);
+  if (!result.success) throw new Error("database delete failed");
+
+  const deleted = result.meta.changes ?? 0;
+  console.log(JSON.stringify({ event: "drawings.deleted", deleted }));
+  return json({ deleted });
+}
+
 async function handleApi(request: Request, url: URL, env: Env) {
   try {
+    if (url.pathname === "/api/admin/drawings") {
+      return await handleDeleteAllDrawings(request, url, env);
+    }
+
     if (url.pathname === "/api/drawings/download") {
       if (request.method === "POST") {
         const actor = request.headers.get("cf-connecting-ip") ?? "unknown";
