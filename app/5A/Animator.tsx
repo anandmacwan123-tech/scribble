@@ -24,8 +24,6 @@ type Layer = Drawing & {
   objectUrls: [string, string];
 };
 
-const SOURCE_WIDTH = 1000;
-const SOURCE_HEIGHT = 700;
 const WIDTH = 700;
 const HEIGHT = 1000;
 const FRAME_MS = 300;
@@ -36,14 +34,6 @@ const GRID_CELLS = GRID_COLUMNS * GRID_ROWS;
 const SYNC_INTERVAL_MS = 10_000;
 const BACKGROUND = "#FFFFFF";
 const GREY = "#CCCCCC";
-const DRAWING_SCALE = Math.min(
-  WIDTH / SOURCE_WIDTH,
-  HEIGHT / SOURCE_HEIGHT,
-);
-const DRAWING_WIDTH = SOURCE_WIDTH * DRAWING_SCALE;
-const DRAWING_HEIGHT = SOURCE_HEIGHT * DRAWING_SCALE;
-const DRAWING_X = (WIDTH - DRAWING_WIDTH) / 2;
-const DRAWING_Y = (HEIGHT - DRAWING_HEIGHT) / 2;
 
 const modeCopy: Record<AnimationMode, string> = {
   blink: "all #CCCCCC; one turns black",
@@ -184,12 +174,14 @@ function drawFrame(
 
   const activeIndex = frame % layers.length;
   const drawLayer = (layer: Layer, grey = false) => {
+    const x = (WIDTH - layer.width) / 2;
+    const y = (HEIGHT - layer.height) / 2;
     context.drawImage(
       grey ? layer.greyImage : layer.image,
-      DRAWING_X,
-      DRAWING_Y,
-      DRAWING_WIDTH,
-      DRAWING_HEIGHT,
+      x,
+      y,
+      layer.width,
+      layer.height,
     );
   };
 

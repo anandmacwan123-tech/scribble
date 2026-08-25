@@ -123,9 +123,6 @@ export default function Gallery() {
           ←
         </a>
         <div className="gallery-actions">
-          <a className="gallery-control" href="/5A">
-            animate
-          </a>
           <button
             className="gallery-control"
             type="button"

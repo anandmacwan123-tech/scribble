@@ -131,7 +131,7 @@ test("renders the saved drawing gallery", async () => {
   assert.match(html, /<title>Kept<\/title>/i);
   assert.match(html, />kept\.<\/h1>/i);
   assert.match(html, /download/i);
-  assert.match(html, /animate/i);
+  assert.doesNotMatch(html, /animation tool|href="\/5A"/i);
 });
 
 test("renders the 5A animation tool", async () => {
@@ -163,6 +163,9 @@ test("renders the 5A animation tool", async () => {
   assert.match(animator, /const GRID_ROWS = 10;/);
   assert.match(animator, /const SYNC_INTERVAL_MS = 10_000;/);
   assert.match(animator, /while \(cursor\)/);
+  assert.match(animator, /const x = \(WIDTH - layer\.width\) \/ 2;/);
+  assert.match(animator, /const y = \(HEIGHT - layer\.height\) \/ 2;/);
+  assert.doesNotMatch(animator, /DRAWING_SCALE|DRAWING_WIDTH|DRAWING_HEIGHT/);
   assert.match(animator, /new Mp4OutputFormat/);
   assert.match(animator, /type: "video\/mp4"/);
   assert.match(animator, /preview mp4/i);
