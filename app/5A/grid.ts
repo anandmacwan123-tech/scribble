@@ -1,10 +1,11 @@
-export const GRID_TICK_MS = 100;
-export const MIN_GRID_DWELL_MS = 300;
-export const MAX_GRID_DWELL_MS = 600;
-
 type CellState = {
   layerIndex: number;
-  ticksRemaining: number;
+  nextChangeAt: number;
+};
+
+export type GridTimelineFrame = {
+  durationMs: number;
+  layerIndexes: number[];
 };
 
 function hashLayerIds(layerIds: readonly string[]) {
@@ -27,9 +28,13 @@ function nextRandom(state: { value: number }) {
   return state.value / 0x1_0000_0000;
 }
 
-function randomDwellTicks(randomState: { value: number }) {
-  const minimum = MIN_GRID_DWELL_MS / GRID_TICK_MS;
-  const maximum = MAX_GRID_DWELL_MS / GRID_TICK_MS;
+function randomDwellMs(
+  randomState: { value: number },
+  minimumDwellMs: number,
+  maximumDwellMs: number,
+) {
+  const minimum = Math.max(1, Math.round(minimumDwellMs));
+  const maximum = Math.max(minimum, Math.round(maximumDwellMs));
   return minimum + Math.floor(nextRandom(randomState) * (maximum - minimum + 1));
 }
 
@@ -37,6 +42,8 @@ export function buildGridTimeline(
   layerIds: readonly string[],
   cellCount: number,
   seed: number,
+  minimumDwellMs: number,
+  maximumDwellMs: number,
 ) {
   if (layerIds.length === 0 || cellCount <= 0) return [];
 
@@ -45,26 +52,40 @@ export function buildGridTimeline(
   };
   const states: CellState[] = Array.from({ length: cellCount }, (_, cell) => ({
     layerIndex: cell % layerIds.length,
-    ticksRemaining: randomDwellTicks(randomState),
+    nextChangeAt: randomDwellMs(
+      randomState,
+      minimumDwellMs,
+      maximumDwellMs,
+    ),
   }));
-  const tickCount = Math.max(
-    MAX_GRID_DWELL_MS / GRID_TICK_MS,
-    layerIds.length * (MIN_GRID_DWELL_MS / GRID_TICK_MS),
+  const durationMs = Math.max(
+    Math.round(maximumDwellMs),
+    layerIds.length * Math.round(minimumDwellMs),
   );
-  const timeline: number[][] = [];
+  const timeline: GridTimelineFrame[] = [];
+  let elapsedMs = 0;
 
-  for (let tick = 0; tick < tickCount; tick += 1) {
-    timeline.push(states.map(({ layerIndex }) => layerIndex));
+  while (elapsedMs < durationMs) {
+    const nextChangeAt = Math.min(
+      durationMs,
+      ...states.map((state) => state.nextChangeAt),
+    );
+    timeline.push({
+      durationMs: nextChangeAt - elapsedMs,
+      layerIndexes: states.map(({ layerIndex }) => layerIndex),
+    });
+    elapsedMs = nextChangeAt;
 
     for (const state of states) {
-      state.ticksRemaining -= 1;
-      if (state.ticksRemaining > 0) continue;
+      if (state.nextChangeAt > elapsedMs) continue;
 
       if (layerIds.length > 1) {
         const step = 1 + Math.floor(nextRandom(randomState) * (layerIds.length - 1));
         state.layerIndex = (state.layerIndex + step) % layerIds.length;
       }
-      state.ticksRemaining = randomDwellTicks(randomState);
+      state.nextChangeAt =
+        elapsedMs +
+        randomDwellMs(randomState, minimumDwellMs, maximumDwellMs);
     }
   }
 

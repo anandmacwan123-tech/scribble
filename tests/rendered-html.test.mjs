@@ -195,22 +195,27 @@ test("renders the 5A animation tool", async () => {
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /<title>5A — Animation<\/title>/i);
-  assert.match(html, /animation tool/i);
+  assert.doesNotMatch(html, /animation tool/i);
   assert.match(html, /blink/i);
   assert.match(html, /solo/i);
   assert.match(html, /grid/i);
+  assert.match(html, /speed/i);
 
   const animator = await readFile(
     new URL("../app/5A/Animator.tsx", import.meta.url),
     "utf8",
   );
-  assert.match(animator, /const FRAME_MS = 300;/);
+  assert.match(animator, /const DEFAULT_SPEED_MS = 300;/);
   assert.match(animator, /const WIDTH = 595;/);
   assert.match(animator, /const HEIGHT = 842;/);
   assert.match(animator, /const BACKGROUND = "#FFFFFF";/);
   assert.match(animator, /const GREY = "#CCCCCC";/);
   assert.match(animator, /const GRID_COLUMNS = 5;/);
   assert.match(animator, /const GRID_ROWS = 10;/);
+  assert.match(animator, /aria-label="Animation speed in milliseconds"/);
+  assert.match(animator, /aria-label="Grid opacity percentage"/);
+  assert.match(animator, /context\.globalAlpha = gridOpacity;/);
+  assert.match(animator, /speedMs \* 2/);
   assert.match(animator, /const SYNC_INTERVAL_MS = 10_000;/);
   assert.match(animator, /while \(cursor\)/);
   assert.match(animator, /context\.drawImage\([\s\S]*?0,[\s\S]*?0,[\s\S]*?WIDTH,[\s\S]*?HEIGHT,/);

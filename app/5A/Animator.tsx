@@ -1,12 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  GRID_TICK_MS,
-  MAX_GRID_DWELL_MS,
-  MIN_GRID_DWELL_MS,
-  buildGridTimeline,
-} from "./grid";
+import { buildGridTimeline, type GridTimelineFrame } from "./grid";
 
 type AnimationMode = "blink" | "solo" | "grid";
 
@@ -32,8 +27,9 @@ type Layer = Drawing & {
 
 const WIDTH = 595;
 const HEIGHT = 842;
-const FRAME_MS = 300;
-const FRAME_SECONDS = FRAME_MS / 1000;
+const DEFAULT_SPEED_MS = 300;
+const MIN_SPEED_MS = 50;
+const MAX_SPEED_MS = 5000;
 const GRID_COLUMNS = 5;
 const GRID_ROWS = 10;
 const GRID_CELLS = GRID_COLUMNS * GRID_ROWS;
@@ -41,18 +37,13 @@ const SYNC_INTERVAL_MS = 10_000;
 const BACKGROUND = "#FFFFFF";
 const GREY = "#CCCCCC";
 
-const modeCopy: Record<AnimationMode, string> = {
-  blink: "all #CCCCCC; one turns black",
-  solo: "one black five at a time",
-  grid: "5 × 10 masks; sources shift",
-};
+function clamp(value: number, minimum: number, maximum: number) {
+  return Math.min(maximum, Math.max(minimum, value));
+}
 
-const timeFormatter = new Intl.DateTimeFormat(undefined, {
-  month: "short",
-  day: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-});
+function normalizeSpeed(value: number) {
+  return clamp(Math.round(value), MIN_SPEED_MS, MAX_SPEED_MS);
+}
 
 function versionedPreview(drawing: Drawing) {
   const url = new URL(drawing.previewUrl, window.location.origin);
@@ -167,7 +158,8 @@ function drawFrame(
   layers: Layer[],
   mode: AnimationMode,
   frame: number,
-  gridTimeline: number[][],
+  gridTimeline: GridTimelineFrame[],
+  gridOpacity: number,
 ) {
   context.save();
   context.globalAlpha = 1;
@@ -202,8 +194,9 @@ function drawFrame(
     const cellHeight = HEIGHT / GRID_ROWS;
     const gridFrame =
       gridTimeline.length > 0
-        ? gridTimeline[frame % gridTimeline.length]
+        ? gridTimeline[frame % gridTimeline.length].layerIndexes
         : null;
+    context.globalAlpha = gridOpacity;
 
     for (let cell = 0; cell < GRID_CELLS; cell += 1) {
       const column = cell % GRID_COLUMNS;
@@ -238,12 +231,13 @@ export default function Animator() {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<AnimationMode>("blink");
   const [frame, setFrame] = useState(0);
+  const [speedInput, setSpeedInput] = useState(String(DEFAULT_SPEED_MS));
+  const [gridOpacityPercent, setGridOpacityPercent] = useState(100);
   const [gridSeed, setGridSeed] = useState(() => Date.now() >>> 0);
   const [playing, setPlaying] = useState(true);
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
-  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [exportStatus, setExportStatus] = useState<
     "idle" | "encoding" | "error" | "unsupported"
   >("idle");
@@ -253,15 +247,24 @@ export default function Animator() {
     () => layers.filter((layer) => !hidden.has(layer.id)),
     [hidden, layers],
   );
+  const parsedSpeed = Number(speedInput);
+  const speedMs = normalizeSpeed(
+    speedInput.trim() !== "" && Number.isFinite(parsedSpeed)
+      ? parsedSpeed
+      : DEFAULT_SPEED_MS,
+  );
   const gridTimeline = useMemo(
     () =>
       buildGridTimeline(
         visibleLayers.map(({ id }) => id),
         GRID_CELLS,
         gridSeed,
+        speedMs,
+        speedMs * 2,
       ),
-    [gridSeed, visibleLayers],
+    [gridSeed, speedMs, visibleLayers],
   );
+  const gridOpacity = gridOpacityPercent / 100;
 
   const discardExportPreview = useCallback(() => {
     previewGenerationRef.current += 1;
@@ -305,7 +308,6 @@ export default function Animator() {
         const next = new Set([...current].filter((id) => nextCache.has(id)));
         return next.size === current.size ? current : next;
       });
-      setLastSyncedAt(new Date());
       setStatus("ready");
     } catch (error) {
       for (const layer of createdLayers) releaseLayer(layer);
@@ -344,19 +346,30 @@ export default function Animator() {
 
   useEffect(() => {
     if (!playing || visibleLayers.length === 0) return;
-    const interval = window.setInterval(
+    const delay =
+      mode === "grid"
+        ? (gridTimeline[frame % gridTimeline.length]?.durationMs ?? speedMs)
+        : speedMs;
+    const timeout = window.setTimeout(
       () => setFrame((current) => current + 1),
-      mode === "grid" ? GRID_TICK_MS : FRAME_MS,
+      delay,
     );
-    return () => window.clearInterval(interval);
-  }, [mode, playing, visibleLayers.length]);
+    return () => window.clearTimeout(timeout);
+  }, [frame, gridTimeline, mode, playing, speedMs, visibleLayers.length]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const context = canvas?.getContext("2d");
     if (!context) return;
-    drawFrame(context, visibleLayers, mode, frame, gridTimeline);
-  }, [frame, gridTimeline, mode, visibleLayers]);
+    drawFrame(
+      context,
+      visibleLayers,
+      mode,
+      frame,
+      gridTimeline,
+      gridOpacity,
+    );
+  }, [frame, gridOpacity, gridTimeline, mode, visibleLayers]);
 
   const changeMode = (nextMode: AnimationMode) => {
     if (nextMode !== mode || nextMode === "grid") discardExportPreview();
@@ -398,6 +411,18 @@ export default function Animator() {
       setGridSeed((current) => (current + 0x9e3779b9) >>> 0);
     }
     setFrame(0);
+  };
+
+  const changeSpeed = (value: string) => {
+    discardExportPreview();
+    setSpeedInput(value);
+    setFrame(0);
+  };
+
+  const changeGridOpacity = (value: number) => {
+    if (!Number.isFinite(value)) return;
+    discardExportPreview();
+    setGridOpacityPercent(clamp(Math.round(value), 0, 100));
   };
 
   const previewAnimation = async () => {
@@ -442,19 +467,30 @@ export default function Animator() {
         quality: new Quality({ bitrate: 8_000_000 }),
         keyFrameInterval: 2,
       });
-      output.addVideoTrack(source, { frameRate: 10 });
+      output.addVideoTrack(source);
       await output.start();
 
       const exportFrameCount =
         mode === "grid" ? gridTimeline.length : visibleLayers.length;
-      const exportFrameSeconds =
-        mode === "grid" ? GRID_TICK_MS / 1000 : FRAME_SECONDS;
+      let exportTimestamp = 0;
 
       for (let exportFrame = 0; exportFrame < exportFrameCount; exportFrame += 1) {
-        drawFrame(context, visibleLayers, mode, exportFrame, gridTimeline);
-        await source.add(exportFrame * exportFrameSeconds, exportFrameSeconds, {
+        const exportFrameSeconds =
+          mode === "grid"
+            ? gridTimeline[exportFrame].durationMs / 1000
+            : speedMs / 1000;
+        drawFrame(
+          context,
+          visibleLayers,
+          mode,
+          exportFrame,
+          gridTimeline,
+          gridOpacity,
+        );
+        await source.add(exportTimestamp, exportFrameSeconds, {
           keyFrame: exportFrame === 0,
         });
+        exportTimestamp += exportFrameSeconds;
       }
       await output.finalize();
       if (!target.buffer) throw new Error("empty export");
@@ -482,12 +518,6 @@ export default function Animator() {
     anchor.remove();
   };
 
-  const previewFrameCount =
-    mode === "grid" ? gridTimeline.length : visibleLayers.length;
-  const previewFrameMs = mode === "grid" ? GRID_TICK_MS : FRAME_MS;
-  const cycleSeconds = (previewFrameCount * previewFrameMs) / 1000;
-  const activeFrame = previewFrameCount > 0 ? (frame % previewFrameCount) + 1 : 0;
-
   return (
     <main className="animator-page" aria-busy={status === "loading"}>
       <header className="animator-header">
@@ -496,18 +526,14 @@ export default function Animator() {
             ←
           </a>
           <h1>5A.</h1>
-          <span className="animator-subtitle">animation tool</span>
         </div>
         <div className="animator-sync" aria-live="polite">
-          <span>
-            {status === "loading"
-              ? "importing layers…"
-              : status === "error"
-                ? "sync interrupted"
-                : `${layers.length} layer${layers.length === 1 ? "" : "s"} · live`}
-          </span>
-          <button type="button" onClick={() => void sync()}>
-            sync
+          <button
+            type="button"
+            disabled={status === "loading"}
+            onClick={() => void sync()}
+          >
+            {status === "loading" ? "loading…" : status === "error" ? "retry" : "sync"}
           </button>
         </div>
       </header>
@@ -515,7 +541,7 @@ export default function Animator() {
       <section className="animator-tools" aria-label="Animation controls">
         <div className="animator-tool-group">
           <span className="animator-label">effect</span>
-          {(["blink", "solo", "grid"] as const).map((effect, index) => (
+          {(["blink", "solo", "grid"] as const).map((effect) => (
             <button
               className={`animator-mode${mode === effect ? " animator-mode--active" : ""}`}
               type="button"
@@ -523,15 +549,50 @@ export default function Animator() {
               onClick={() => changeMode(effect)}
               key={effect}
             >
-              <span>{index + 1}</span>
               <strong>{effect}</strong>
-              <small>{modeCopy[effect]}</small>
             </button>
           ))}
         </div>
 
+        <div className="animator-settings">
+          <label className="animator-input-row">
+            <span className="animator-label">speed</span>
+            <span className="animator-input-value">
+              <input
+                type="number"
+                min={MIN_SPEED_MS}
+                max={MAX_SPEED_MS}
+                step="1"
+                value={speedInput}
+                onChange={(event) => changeSpeed(event.currentTarget.value)}
+                onBlur={() => setSpeedInput(String(speedMs))}
+                aria-label="Animation speed in milliseconds"
+              />
+              <span>ms</span>
+            </span>
+          </label>
+          {mode === "grid" ? (
+            <label className="animator-input-row">
+              <span className="animator-label">opacity</span>
+              <span className="animator-input-value">
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="5"
+                  value={gridOpacityPercent}
+                  onChange={(event) =>
+                    changeGridOpacity(event.currentTarget.valueAsNumber)
+                  }
+                  aria-label="Grid opacity percentage"
+                />
+                <span>%</span>
+              </span>
+            </label>
+          ) : null}
+        </div>
+
         <div className="animator-transport">
-          <span className="animator-label">transport</span>
           <div className="animator-transport-row">
             <button
               type="button"
@@ -548,13 +609,6 @@ export default function Animator() {
               restart
             </button>
           </div>
-          <p>
-            frame {activeFrame} / {previewFrameCount}
-            <br />
-            {mode === "grid"
-              ? `${MIN_GRID_DWELL_MS}–${MAX_GRID_DWELL_MS} ms per block`
-              : `${FRAME_MS} ms`} · {cycleSeconds.toFixed(1)} s loop
-          </p>
         </div>
 
         <div className="animator-export">
@@ -566,7 +620,6 @@ export default function Animator() {
           >
             {exportStatus === "encoding" ? "encoding preview…" : "preview mp4"}
           </button>
-          <p>A4 portrait · {WIDTH} × {HEIGHT} · white</p>
           {exportStatus === "unsupported" ? (
             <p className="animator-error">animation export isn’t supported here.</p>
           ) : null}
@@ -601,7 +654,6 @@ export default function Animator() {
                 aria-label={`${mode} MP4 export preview`}
               />
               <div className="animation-export-actions">
-                <span>exact mp4 preview</span>
                 <button type="button" onClick={downloadPreview}>
                   download mp4
                 </button>
@@ -615,17 +667,12 @@ export default function Animator() {
             <p className="animator-empty">nothing kept yet.</p>
           ) : null}
         </div>
-        <div className="animator-stage-note">
-          <span>{modeCopy[mode]}</span>
-          <span>{playing ? "playing" : "paused"}</span>
-        </div>
       </section>
 
       <aside className="animator-layers" aria-label="Drawing layers">
         <div className="animator-layers-header">
           <div>
-            <span className="animator-label">layers</span>
-            <p>{visibleLayers.length} visible</p>
+            <span className="animator-label">layers · {visibleLayers.length}</span>
           </div>
           <div>
             <button type="button" onClick={showAll} disabled={hidden.size === 0}>
@@ -662,7 +709,6 @@ export default function Animator() {
                   <img src={layer.image.src} alt="" loading="lazy" draggable="false" />
                   <span>
                     <strong>five {String(index + 1).padStart(3, "0")}</strong>
-                    <small>{timeFormatter.format(new Date(layer.createdAt))}</small>
                   </span>
                 </label>
               </li>
@@ -670,11 +716,6 @@ export default function Animator() {
           })}
         </ol>
 
-        <p className="animator-last-sync">
-          {lastSyncedAt
-            ? `synced ${lastSyncedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
-            : "waiting for first sync"}
-        </p>
       </aside>
     </main>
   );

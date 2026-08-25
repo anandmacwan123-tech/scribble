@@ -471,10 +471,7 @@ button {
   text-decoration: none;
 }
 
-.animator-subtitle,
-.animator-sync,
-.animator-stage-note,
-.animator-last-sync {
+.animator-sync {
   color: var(--muted);
   font-size: 11px;
   letter-spacing: 0.045em;
@@ -513,7 +510,7 @@ button {
 .animator-tools {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 28px;
   padding-bottom: 26px;
 }
@@ -533,27 +530,14 @@ button {
 }
 
 .animator-mode {
-  display: grid;
-  grid-template-columns: 18px 1fr;
-  gap: 3px 8px;
   width: 100%;
   padding: 10px 8px;
   text-align: left;
   opacity: 0.44;
 }
 
-.animator-mode > span {
-  grid-row: 1 / 3;
-}
-
 .animator-mode strong {
   font-size: 13px;
-}
-
-.animator-mode small {
-  color: var(--muted);
-  font-size: 9px;
-  line-height: 1.3;
 }
 
 .animator-mode--active {
@@ -561,14 +545,46 @@ button {
   opacity: 1;
 }
 
+.animator-settings {
+  display: grid;
+  gap: 14px;
+}
+
+.animator-input-row {
+  display: grid;
+  gap: 6px;
+}
+
+.animator-input-row .animator-label {
+  margin: 0;
+}
+
+.animator-input-value {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.animator-input-value input {
+  width: 88px;
+  min-height: 34px;
+  border: 1px solid rgba(23, 23, 19, 0.22);
+  border-radius: 0;
+  padding: 0 8px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+
 .animator-transport-row {
   align-items: stretch;
   gap: 5px;
 }
 
-.animator-transport p,
 .animator-export p,
-.animator-layers-header p,
 .animator-empty {
   margin: 8px 0 0;
   color: var(--muted);
@@ -578,6 +594,10 @@ button {
 
 .animator-export > button {
   width: 100%;
+}
+
+.animator-export {
+  margin-top: auto;
 }
 
 .animator-error {
@@ -595,7 +615,7 @@ button {
 
 .animation-paper {
   position: relative;
-  width: min(100%, calc((100vh - 170px) * 595 / 842));
+  width: min(100%, calc((100vh - 150px) * 595 / 842));
   aspect-ratio: 595 / 842;
   flex: 0 0 auto;
   overflow: hidden;
@@ -636,13 +656,6 @@ button {
   box-shadow: 0 3px 16px rgba(23, 23, 19, 0.12);
 }
 
-.animation-export-actions span {
-  padding: 0 5px;
-  color: var(--muted);
-  font-size: 9px;
-  letter-spacing: 0.045em;
-}
-
 .animation-export-actions button {
   min-height: 30px;
   border: 1px solid rgba(23, 23, 19, 0.22);
@@ -662,16 +675,9 @@ button {
   place-items: center;
 }
 
-.animator-stage-note {
-  display: flex;
-  width: min(100%, calc((100vh - 170px) * 595 / 842));
-  justify-content: space-between;
-  margin-top: 10px;
-}
-
 .animator-layers {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   border-left: 1px solid rgba(23, 23, 19, 0.16);
   padding-left: clamp(14px, 1.8vw, 26px);
@@ -686,15 +692,13 @@ button {
   gap: 2px;
 }
 
-.animator-layers-header p {
-  margin: 0;
-}
-
 .animator-layers-header .animator-label {
   margin-bottom: 2px;
 }
 
 .animator-layer-list {
+  min-height: 0;
+  flex: 1;
   margin: 0;
   padding: 0;
   overflow-y: auto;
@@ -736,8 +740,7 @@ button {
   gap: 2px;
 }
 
-.animator-layer-list strong,
-.animator-layer-list small {
+.animator-layer-list strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -748,17 +751,8 @@ button {
   letter-spacing: 0.035em;
 }
 
-.animator-layer-list small {
-  color: var(--muted);
-  font-size: 8px;
-}
-
 .animator-layer--hidden {
   opacity: 0.3;
-}
-
-.animator-last-sync {
-  margin: 10px 0 0;
 }
 
 .animator-retry {
@@ -772,6 +766,7 @@ button {
 
 .animator-page button:focus-visible,
 .animator-page a:focus-visible,
+.animator-input-value input:focus-visible,
 .animator-layer-list input:focus-visible,
 .animation-export-preview video:focus-visible {
   outline: 1px solid var(--ink);
@@ -915,11 +910,6 @@ button {
     flex: 0 0 auto;
   }
 
-  .animator-subtitle,
-  .animator-sync > span {
-    display: none;
-  }
-
   .animator-tools {
     flex: 0 0 auto;
   }
@@ -932,28 +922,20 @@ button {
     grid-column: 1 / -1;
   }
 
-  .animator-mode {
-    display: block;
-  }
-
-  .animator-mode > span,
-  .animator-mode small {
-    display: none;
+  .animator-settings {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .animator-transport,
   .animator-export {
-    display: inline-block;
-    width: calc(50% - 4px);
-    vertical-align: top;
+    width: 100%;
   }
 
   .animator-export {
-    margin-left: 4px;
+    margin-top: 0;
   }
 
-  .animation-paper,
-  .animator-stage-note {
+  .animation-paper {
     width: 100%;
   }
 
