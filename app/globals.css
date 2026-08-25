@@ -595,8 +595,9 @@ button {
 
 .animation-paper {
   position: relative;
-  width: min(100%, calc((100vh - 150px) * 595 / 842));
+  width: min(100%, calc((100vh - 170px) * 595 / 842));
   aspect-ratio: 595 / 842;
+  flex: 0 0 auto;
   overflow: hidden;
   background: #fff;
   box-shadow: 0 18px 55px rgba(23, 23, 19, 0.08);
@@ -663,7 +664,7 @@ button {
 
 .animator-stage-note {
   display: flex;
-  width: min(100%, calc((100vh - 150px) * 595 / 842));
+  width: min(100%, calc((100vh - 170px) * 595 / 842));
   justify-content: space-between;
   margin-top: 10px;
 }

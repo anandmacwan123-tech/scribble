@@ -222,6 +222,12 @@ test("renders the 5A animation tool", async () => {
   assert.match(animator, /downloadPreview/);
   assert.match(animator, /URL\.createObjectURL\(blob\)/);
   assert.match(animator, /\.mp4`/);
+
+  const css = await readFile(
+    new URL("../app/globals.css", import.meta.url),
+    "utf8",
+  );
+  assert.match(css, /\.animation-paper\s*\{[\s\S]*?aspect-ratio:\s*595\s*\/\s*842;[\s\S]*?flex:\s*0\s+0\s+auto;/);
 });
 
 test("constructs canonical SVG on the server and writes it to D1", async () => {
