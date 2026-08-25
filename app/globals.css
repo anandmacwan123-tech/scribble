@@ -579,6 +579,45 @@ button {
   font-size: 12px;
 }
 
+.animator-upload-row {
+  display: grid;
+  gap: 6px;
+}
+
+.animator-upload-row .animator-label {
+  margin: 0;
+}
+
+.animator-upload-button {
+  position: relative;
+  display: grid;
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid rgba(23, 23, 19, 0.22);
+  place-items: center;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.animator-upload-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.animator-upload-button:focus-within {
+  outline: 1px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.animator-upload-error {
+  color: var(--muted);
+  font-size: 10px;
+}
+
 .animator-transport-row {
   align-items: stretch;
   gap: 5px;
@@ -717,6 +756,34 @@ button {
   align-items: center;
   min-height: 52px;
   cursor: pointer;
+}
+
+.animator-uploaded-layer {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) 28px;
+  gap: 8px;
+  align-items: center;
+  min-height: 52px;
+}
+
+.animator-uploaded-layer > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.animator-uploaded-layer small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.animator-uploaded-layer button {
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
 }
 
 .animator-layer-list input {

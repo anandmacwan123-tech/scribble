@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { containImageRect } from "./fit";
 import { buildGridTimeline, type GridTimelineFrame } from "./grid";
 
-type AnimationMode = "blink" | "solo" | "grid";
+type AnimationMode = "blink" | "solo" | "grid" | "grid-v2";
 
 type Drawing = {
   id: string;
@@ -25,8 +26,21 @@ type Layer = Drawing & {
   objectUrls: [string, string];
 };
 
+type AnimationLayer = {
+  id: string;
+  image: HTMLImageElement;
+  greyImage?: HTMLImageElement;
+};
+
+type UploadedLayer = AnimationLayer & {
+  name: string;
+  objectUrl: string;
+};
+
 const WIDTH = 595;
 const HEIGHT = 842;
+const ENCODE_WIDTH = WIDTH + (WIDTH % 2);
+const ENCODE_HEIGHT = HEIGHT + (HEIGHT % 2);
 const DEFAULT_SPEED_MS = 300;
 const MIN_SPEED_MS = 50;
 const MAX_SPEED_MS = 5000;
@@ -36,6 +50,18 @@ const GRID_CELLS = GRID_COLUMNS * GRID_ROWS;
 const SYNC_INTERVAL_MS = 10_000;
 const BACKGROUND = "#FFFFFF";
 const GREY = "#CCCCCC";
+const GRID_COLOR = "#171713";
+
+const EFFECTS: { mode: AnimationMode; label: string }[] = [
+  { mode: "blink", label: "blink" },
+  { mode: "solo", label: "solo" },
+  { mode: "grid", label: "grid v1" },
+  { mode: "grid-v2", label: "grid v2" },
+];
+
+function isGridMode(mode: AnimationMode) {
+  return mode === "grid" || mode === "grid-v2";
+}
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -130,6 +156,26 @@ function releaseLayer(layer: Layer) {
   for (const url of layer.objectUrls) URL.revokeObjectURL(url);
 }
 
+async function loadUploadedLayer(file: File, signal: AbortSignal) {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = await loadImage(objectUrl, signal);
+    return {
+      id: `upload-${crypto.randomUUID()}`,
+      image,
+      name: file.name,
+      objectUrl,
+    } satisfies UploadedLayer;
+  } catch (error) {
+    URL.revokeObjectURL(objectUrl);
+    throw error;
+  }
+}
+
+function releaseUploadedLayer(layer: UploadedLayer) {
+  URL.revokeObjectURL(layer.objectUrl);
+}
+
 async function mapWithConcurrency<T, R>(
   values: T[],
   limit: number,
@@ -155,7 +201,7 @@ async function mapWithConcurrency<T, R>(
 
 function drawFrame(
   context: CanvasRenderingContext2D,
-  layers: Layer[],
+  layers: AnimationLayer[],
   mode: AnimationMode,
   frame: number,
   gridTimeline: GridTimelineFrame[],
@@ -172,13 +218,20 @@ function drawFrame(
   }
 
   const activeIndex = frame % layers.length;
-  const drawLayer = (layer: Layer, grey = false) => {
-    context.drawImage(
-      grey ? layer.greyImage : layer.image,
-      0,
-      0,
+  const drawLayer = (layer: AnimationLayer, grey = false) => {
+    const image = grey && layer.greyImage ? layer.greyImage : layer.image;
+    const rect = containImageRect(
+      image.naturalWidth,
+      image.naturalHeight,
       WIDTH,
       HEIGHT,
+    );
+    context.drawImage(
+      image,
+      rect.x,
+      rect.y,
+      rect.width,
+      rect.height,
     );
   };
 
@@ -196,8 +249,6 @@ function drawFrame(
       gridTimeline.length > 0
         ? gridTimeline[frame % gridTimeline.length].layerIndexes
         : null;
-    context.globalAlpha = gridOpacity;
-
     for (let cell = 0; cell < GRID_CELLS; cell += 1) {
       const column = cell % GRID_COLUMNS;
       const row = Math.floor(cell / GRID_COLUMNS);
@@ -215,6 +266,24 @@ function drawFrame(
       drawLayer(layer);
       context.restore();
     }
+
+    context.save();
+    context.globalAlpha = gridOpacity;
+    context.strokeStyle = GRID_COLOR;
+    context.lineWidth = 1;
+    context.beginPath();
+    for (let column = 1; column < GRID_COLUMNS; column += 1) {
+      const x = column * cellWidth;
+      context.moveTo(x, 0);
+      context.lineTo(x, HEIGHT);
+    }
+    for (let row = 1; row < GRID_ROWS; row += 1) {
+      const y = row * cellHeight;
+      context.moveTo(0, y);
+      context.lineTo(WIDTH, y);
+    }
+    context.stroke();
+    context.restore();
   }
 
   context.restore();
@@ -223,11 +292,14 @@ function drawFrame(
 export default function Animator() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const layerCacheRef = useRef<Map<string, Layer>>(new Map());
+  const uploadedLayersRef = useRef<UploadedLayer[]>([]);
   const syncControllerRef = useRef<AbortController | null>(null);
+  const uploadControllerRef = useRef<AbortController | null>(null);
   const syncingRef = useRef(false);
   const previewUrlRef = useRef<string | null>(null);
   const previewGenerationRef = useRef(0);
   const [layers, setLayers] = useState<Layer[]>([]);
+  const [uploadedLayers, setUploadedLayers] = useState<UploadedLayer[]>([]);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<AnimationMode>("blink");
   const [frame, setFrame] = useState(0);
@@ -242,11 +314,15 @@ export default function Animator() {
     "idle" | "encoding" | "error" | "unsupported"
   >("idle");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [uploadStatus, setUploadStatus] = useState<
+    "idle" | "loading" | "error"
+  >("idle");
 
   const visibleLayers = useMemo(
     () => layers.filter((layer) => !hidden.has(layer.id)),
     [hidden, layers],
   );
+  const animationLayers = mode === "grid-v2" ? uploadedLayers : visibleLayers;
   const parsedSpeed = Number(speedInput);
   const speedMs = normalizeSpeed(
     speedInput.trim() !== "" && Number.isFinite(parsedSpeed)
@@ -256,13 +332,13 @@ export default function Animator() {
   const gridTimeline = useMemo(
     () =>
       buildGridTimeline(
-        visibleLayers.map(({ id }) => id),
+        animationLayers.map(({ id }) => id),
         GRID_CELLS,
         gridSeed,
         speedMs,
         speedMs * 2,
       ),
-    [gridSeed, speedMs, visibleLayers],
+    [animationLayers, gridSeed, speedMs],
   );
   const gridOpacity = gridOpacityPercent / 100;
 
@@ -336,18 +412,23 @@ export default function Animator() {
       window.removeEventListener("focus", syncWhenVisible);
       document.removeEventListener("visibilitychange", syncWhenVisible);
       syncControllerRef.current?.abort();
+      uploadControllerRef.current?.abort();
       syncingRef.current = false;
       previewGenerationRef.current += 1;
       if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
       for (const layer of layerCacheRef.current.values()) releaseLayer(layer);
       layerCacheRef.current.clear();
+      for (const layer of uploadedLayersRef.current) {
+        releaseUploadedLayer(layer);
+      }
+      uploadedLayersRef.current = [];
     };
   }, [sync]);
 
   useEffect(() => {
-    if (!playing || visibleLayers.length === 0) return;
+    if (!playing || animationLayers.length === 0) return;
     const delay =
-      mode === "grid"
+      isGridMode(mode)
         ? (gridTimeline[frame % gridTimeline.length]?.durationMs ?? speedMs)
         : speedMs;
     const timeout = window.setTimeout(
@@ -355,7 +436,7 @@ export default function Animator() {
       delay,
     );
     return () => window.clearTimeout(timeout);
-  }, [frame, gridTimeline, mode, playing, speedMs, visibleLayers.length]);
+  }, [animationLayers.length, frame, gridTimeline, mode, playing, speedMs]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -363,17 +444,17 @@ export default function Animator() {
     if (!context) return;
     drawFrame(
       context,
-      visibleLayers,
+      animationLayers,
       mode,
       frame,
       gridTimeline,
       gridOpacity,
     );
-  }, [frame, gridOpacity, gridTimeline, mode, visibleLayers]);
+  }, [animationLayers, frame, gridOpacity, gridTimeline, mode]);
 
   const changeMode = (nextMode: AnimationMode) => {
-    if (nextMode !== mode || nextMode === "grid") discardExportPreview();
-    if (nextMode === "grid") {
+    if (nextMode !== mode || isGridMode(nextMode)) discardExportPreview();
+    if (isGridMode(nextMode)) {
       setGridSeed((current) => (current + 0x9e3779b9) >>> 0);
     }
     setMode(nextMode);
@@ -406,7 +487,7 @@ export default function Animator() {
   };
 
   const restart = () => {
-    if (mode === "grid") {
+    if (isGridMode(mode)) {
       discardExportPreview();
       setGridSeed((current) => (current + 0x9e3779b9) >>> 0);
     }
@@ -425,8 +506,81 @@ export default function Animator() {
     setGridOpacityPercent(clamp(Math.round(value), 0, 100));
   };
 
+  const addUploadedImages = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    discardExportPreview();
+    uploadControllerRef.current?.abort();
+    const controller = new AbortController();
+    uploadControllerRef.current = controller;
+    setUploadStatus("loading");
+
+    try {
+      const imageFiles = [...files].filter((file) =>
+        file.type.startsWith("image/"),
+      );
+      if (imageFiles.length === 0) throw new Error("no images");
+      const results = await mapWithConcurrency(imageFiles, 4, async (file) => {
+        try {
+          return { layer: await loadUploadedLayer(file, controller.signal) };
+        } catch (error) {
+          return { error };
+        }
+      });
+      const nextLayers = results.flatMap((result) =>
+        result.layer ? [result.layer] : [],
+      );
+      if (results.some((result) => result.error)) {
+        for (const layer of nextLayers) releaseUploadedLayer(layer);
+        throw new Error("image failed");
+      }
+      if (controller.signal.aborted) {
+        for (const layer of nextLayers) releaseUploadedLayer(layer);
+        return;
+      }
+      setUploadedLayers((current) => {
+        const next = [...current, ...nextLayers];
+        uploadedLayersRef.current = next;
+        return next;
+      });
+      setUploadStatus("idle");
+      setFrame(0);
+      setPlaying(true);
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError")) {
+        setUploadStatus("error");
+      }
+    } finally {
+      if (uploadControllerRef.current === controller) {
+        uploadControllerRef.current = null;
+      }
+    }
+  };
+
+  const removeUploadedLayer = (id: string) => {
+    discardExportPreview();
+    setUploadedLayers((current) => {
+      const removed = current.find((layer) => layer.id === id);
+      if (removed) releaseUploadedLayer(removed);
+      const next = current.filter((layer) => layer.id !== id);
+      uploadedLayersRef.current = next;
+      return next;
+    });
+    setFrame(0);
+  };
+
+  const clearUploadedLayers = () => {
+    discardExportPreview();
+    for (const layer of uploadedLayersRef.current) {
+      releaseUploadedLayer(layer);
+    }
+    uploadedLayersRef.current = [];
+    setUploadedLayers([]);
+    setFrame(0);
+    setPlaying(false);
+  };
+
   const previewAnimation = async () => {
-    if (visibleLayers.length === 0 || exportStatus === "encoding") return;
+    if (animationLayers.length === 0 || exportStatus === "encoding") return;
     if (typeof VideoEncoder === "undefined") {
       setExportStatus("unsupported");
       return;
@@ -448,21 +602,30 @@ export default function Animator() {
       setExportStatus("error");
       return;
     }
+    const encoderCanvas = document.createElement("canvas");
+    encoderCanvas.width = ENCODE_WIDTH;
+    encoderCanvas.height = ENCODE_HEIGHT;
+    const encoderContext = encoderCanvas.getContext("2d");
+    if (!encoderContext) {
+      setExportStatus("error");
+      return;
+    }
 
     try {
       const {
         BufferTarget,
-        CanvasSource,
         Mp4OutputFormat,
         Output,
         Quality,
+        VideoSample,
+        VideoSampleSource,
       } = await import("mediabunny");
       const target = new BufferTarget();
       const output = new Output({
         format: new Mp4OutputFormat({ fastStart: "in-memory" }),
         target,
       });
-      const source = new CanvasSource(exportCanvas, {
+      const source = new VideoSampleSource({
         codec: "avc",
         quality: new Quality({ bitrate: 8_000_000 }),
         keyFrameInterval: 2,
@@ -471,25 +634,45 @@ export default function Animator() {
       await output.start();
 
       const exportFrameCount =
-        mode === "grid" ? gridTimeline.length : visibleLayers.length;
+        isGridMode(mode) ? gridTimeline.length : animationLayers.length;
       let exportTimestamp = 0;
 
       for (let exportFrame = 0; exportFrame < exportFrameCount; exportFrame += 1) {
         const exportFrameSeconds =
-          mode === "grid"
+          isGridMode(mode)
             ? gridTimeline[exportFrame].durationMs / 1000
             : speedMs / 1000;
         drawFrame(
           context,
-          visibleLayers,
+          animationLayers,
           mode,
           exportFrame,
           gridTimeline,
           gridOpacity,
         );
-        await source.add(exportTimestamp, exportFrameSeconds, {
-          keyFrame: exportFrame === 0,
+        encoderContext.drawImage(
+          exportCanvas,
+          0,
+          0,
+          WIDTH,
+          HEIGHT,
+          0,
+          0,
+          ENCODE_WIDTH,
+          ENCODE_HEIGHT,
+        );
+        const videoFrame = new VideoFrame(encoderCanvas, {
+          timestamp: Math.round(exportTimestamp * 1_000_000),
+          duration: Math.round(exportFrameSeconds * 1_000_000),
+          displayWidth: WIDTH,
+          displayHeight: HEIGHT,
         });
+        const sample = new VideoSample(videoFrame);
+        try {
+          await source.add(sample, { keyFrame: exportFrame === 0 });
+        } finally {
+          sample.close();
+        }
         exportTimestamp += exportFrameSeconds;
       }
       await output.finalize();
@@ -541,15 +724,15 @@ export default function Animator() {
       <section className="animator-tools" aria-label="Animation controls">
         <div className="animator-tool-group">
           <span className="animator-label">effect</span>
-          {(["blink", "solo", "grid"] as const).map((effect) => (
+          {EFFECTS.map((effect) => (
             <button
-              className={`animator-mode${mode === effect ? " animator-mode--active" : ""}`}
+              className={`animator-mode${mode === effect.mode ? " animator-mode--active" : ""}`}
               type="button"
-              aria-pressed={mode === effect}
-              onClick={() => changeMode(effect)}
-              key={effect}
+              aria-pressed={mode === effect.mode}
+              onClick={() => changeMode(effect.mode)}
+              key={effect.mode}
             >
-              <strong>{effect}</strong>
+              <strong>{effect.label}</strong>
             </button>
           ))}
         </div>
@@ -571,9 +754,9 @@ export default function Animator() {
               <span>ms</span>
             </span>
           </label>
-          {mode === "grid" ? (
+          {isGridMode(mode) ? (
             <label className="animator-input-row">
-              <span className="animator-label">opacity</span>
+              <span className="animator-label">grid opacity</span>
               <span className="animator-input-value">
                 <input
                   type="number"
@@ -590,20 +773,44 @@ export default function Animator() {
               </span>
             </label>
           ) : null}
+          {mode === "grid-v2" ? (
+            <label className="animator-upload-row">
+              <span className="animator-label">images</span>
+              <span className="animator-upload-button">
+                {uploadStatus === "loading" ? "loading…" : "choose images"}
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  disabled={uploadStatus === "loading"}
+                  aria-label="Upload A4 images"
+                  onChange={(event) => {
+                    const input = event.currentTarget;
+                    void addUploadedImages(input.files).finally(() => {
+                      input.value = "";
+                    });
+                  }}
+                />
+              </span>
+              {uploadStatus === "error" ? (
+                <span className="animator-upload-error">couldn’t load image.</span>
+              ) : null}
+            </label>
+          ) : null}
         </div>
 
         <div className="animator-transport">
           <div className="animator-transport-row">
             <button
               type="button"
-              disabled={visibleLayers.length === 0}
+              disabled={animationLayers.length === 0}
               onClick={() => setPlaying((current) => !current)}
             >
               {playing ? "pause" : "play"}
             </button>
             <button
               type="button"
-              disabled={visibleLayers.length === 0}
+              disabled={animationLayers.length === 0}
               onClick={restart}
             >
               restart
@@ -615,7 +822,7 @@ export default function Animator() {
           <span className="animator-label">output</span>
           <button
             type="button"
-            disabled={visibleLayers.length === 0 || exportStatus === "encoding"}
+            disabled={animationLayers.length === 0 || exportStatus === "encoding"}
             onClick={() => void previewAnimation()}
           >
             {exportStatus === "encoding" ? "encoding preview…" : "preview mp4"}
@@ -636,7 +843,7 @@ export default function Animator() {
             width={WIDTH}
             height={HEIGHT}
             role="img"
-            aria-label={`${mode} animation preview using ${visibleLayers.length} visible layers`}
+            aria-label={`${mode} animation preview using ${animationLayers.length} visible layers`}
           />
           {previewUrl ? (
             <div
@@ -663,7 +870,9 @@ export default function Animator() {
               </div>
             </div>
           ) : null}
-          {status === "ready" && layers.length === 0 ? (
+          {mode === "grid-v2" && uploadedLayers.length === 0 ? (
+            <p className="animator-empty">choose images.</p>
+          ) : status === "ready" && layers.length === 0 ? (
             <p className="animator-empty">nothing kept yet.</p>
           ) : null}
         </div>
@@ -672,20 +881,34 @@ export default function Animator() {
       <aside className="animator-layers" aria-label="Drawing layers">
         <div className="animator-layers-header">
           <div>
-            <span className="animator-label">layers · {visibleLayers.length}</span>
+            <span className="animator-label">
+              layers · {mode === "grid-v2" ? uploadedLayers.length : visibleLayers.length}
+            </span>
           </div>
-          <div>
-            <button type="button" onClick={showAll} disabled={hidden.size === 0}>
-              all
-            </button>
-            <button
-              type="button"
-              onClick={hideAll}
-              disabled={visibleLayers.length === 0}
-            >
-              none
-            </button>
-          </div>
+          {mode === "grid-v2" ? (
+            <div>
+              <button
+                type="button"
+                onClick={clearUploadedLayers}
+                disabled={uploadedLayers.length === 0}
+              >
+                clear
+              </button>
+            </div>
+          ) : (
+            <div>
+              <button type="button" onClick={showAll} disabled={hidden.size === 0}>
+                all
+              </button>
+              <button
+                type="button"
+                onClick={hideAll}
+                disabled={visibleLayers.length === 0}
+              >
+                none
+              </button>
+            </div>
+          )}
         </div>
 
         {status === "error" ? (
@@ -695,7 +918,27 @@ export default function Animator() {
         ) : null}
 
         <ol className="animator-layer-list">
-          {layers.map((layer, index) => {
+          {mode === "grid-v2"
+            ? uploadedLayers.map((layer, index) => (
+                <li key={layer.id}>
+                  <div className="animator-uploaded-layer">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={layer.image.src} alt="" draggable="false" />
+                    <span>
+                      <strong>image {String(index + 1).padStart(3, "0")}</strong>
+                      <small title={layer.name}>{layer.name}</small>
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${layer.name}`}
+                      onClick={() => removeUploadedLayer(layer.id)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                </li>
+              ))
+            : layers.map((layer, index) => {
             const visible = !hidden.has(layer.id);
             return (
               <li key={layer.id}>
