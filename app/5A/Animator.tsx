@@ -3,6 +3,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { containImageRect } from "./fit";
 import { buildGridTimeline, type GridTimelineFrame } from "./grid";
+import {
+  DEFAULT_STROKE_COLOR,
+  DEFAULT_STROKE_WIDTH,
+  MAX_STROKE_WIDTH,
+  MIN_STROKE_WIDTH,
+  normalizeStrokeColor,
+  normalizeStrokeWidth,
+  styleSvgStroke,
+} from "./style";
 
 type AnimationMode = "blink" | "solo" | "grid" | "grid-v2";
 
@@ -21,6 +30,8 @@ type DrawingPage = {
 };
 
 type Layer = Drawing & {
+  sourceSvg: string;
+  styleKey: string;
   image: HTMLImageElement;
   greyImage: HTMLImageElement;
   objectUrls: [string, string];
@@ -118,15 +129,19 @@ function loadImage(source: string, signal: AbortSignal) {
   });
 }
 
-async function loadLayer(drawing: Drawing, signal: AbortSignal) {
-  const response = await fetch(versionedPreview(drawing), {
-    cache: "no-store",
-    signal,
-  });
-  if (!response.ok) throw new Error("image failed");
+function getStyleKey(color: string, width: number) {
+  return `${normalizeStrokeColor(color)}:${normalizeStrokeWidth(width).toFixed(2)}`;
+}
 
-  const svg = await response.text();
-  const greySvg = svg.replace(/#171713/gi, GREY);
+async function createStyledLayer(
+  drawing: Drawing,
+  sourceSvg: string,
+  color: string,
+  width: number,
+  signal: AbortSignal,
+) {
+  const svg = styleSvgStroke(sourceSvg, color, width);
+  const greySvg = styleSvgStroke(sourceSvg, GREY, width);
   const imageUrl = URL.createObjectURL(
     new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
   );
@@ -141,15 +156,33 @@ async function loadLayer(drawing: Drawing, signal: AbortSignal) {
     ]);
     return {
       ...drawing,
+      sourceSvg,
+      styleKey: getStyleKey(color, width),
       image,
       greyImage,
       objectUrls: [imageUrl, greyImageUrl] as [string, string],
-    };
+    } satisfies Layer;
   } catch (error) {
     URL.revokeObjectURL(imageUrl);
     URL.revokeObjectURL(greyImageUrl);
     throw error;
   }
+}
+
+async function loadLayer(
+  drawing: Drawing,
+  signal: AbortSignal,
+  color: string,
+  width: number,
+) {
+  const response = await fetch(versionedPreview(drawing), {
+    cache: "no-store",
+    signal,
+  });
+  if (!response.ok) throw new Error("image failed");
+
+  const sourceSvg = await response.text();
+  return createStyledLayer(drawing, sourceSvg, color, width, signal);
 }
 
 function releaseLayer(layer: Layer) {
@@ -295,6 +328,9 @@ export default function Animator() {
   const uploadedLayersRef = useRef<UploadedLayer[]>([]);
   const syncControllerRef = useRef<AbortController | null>(null);
   const uploadControllerRef = useRef<AbortController | null>(null);
+  const styleControllerRef = useRef<AbortController | null>(null);
+  const strokeColorRef = useRef(DEFAULT_STROKE_COLOR);
+  const strokeWidthRef = useRef(DEFAULT_STROKE_WIDTH);
   const syncingRef = useRef(false);
   const previewUrlRef = useRef<string | null>(null);
   const previewGenerationRef = useRef(0);
@@ -304,6 +340,13 @@ export default function Animator() {
   const [mode, setMode] = useState<AnimationMode>("blink");
   const [frame, setFrame] = useState(0);
   const [speedInput, setSpeedInput] = useState(String(DEFAULT_SPEED_MS));
+  const [strokeWidthInput, setStrokeWidthInput] = useState(
+    DEFAULT_STROKE_WIDTH.toFixed(2),
+  );
+  const [strokeColor, setStrokeColor] = useState(DEFAULT_STROKE_COLOR);
+  const [strokeColorInput, setStrokeColorInput] = useState(
+    DEFAULT_STROKE_COLOR,
+  );
   const [gridOpacityPercent, setGridOpacityPercent] = useState(100);
   const [gridSeed, setGridSeed] = useState(() => Date.now() >>> 0);
   const [playing, setPlaying] = useState(true);
@@ -329,6 +372,12 @@ export default function Animator() {
       ? parsedSpeed
       : DEFAULT_SPEED_MS,
   );
+  const parsedStrokeWidth = Number(strokeWidthInput);
+  const strokeWidth = normalizeStrokeWidth(
+    strokeWidthInput.trim() !== "" && Number.isFinite(parsedStrokeWidth)
+      ? parsedStrokeWidth
+      : DEFAULT_STROKE_WIDTH,
+  );
   const gridTimeline = useMemo(
     () =>
       buildGridTimeline(
@@ -341,6 +390,11 @@ export default function Animator() {
     [animationLayers, gridSeed, speedMs],
   );
   const gridOpacity = gridOpacityPercent / 100;
+
+  useEffect(() => {
+    strokeColorRef.current = strokeColor;
+    strokeWidthRef.current = strokeWidth;
+  }, [strokeColor, strokeWidth]);
 
   const discardExportPreview = useCallback(() => {
     previewGenerationRef.current += 1;
@@ -366,7 +420,12 @@ export default function Animator() {
       const nextLayers = await mapWithConcurrency(drawings, 8, async (drawing) => {
         const cached = currentCache.get(drawing.id);
         if (cached?.updatedAt === drawing.updatedAt) return cached;
-        const layer = await loadLayer(drawing, controller.signal);
+        const layer = await loadLayer(
+          drawing,
+          controller.signal,
+          strokeColorRef.current,
+          strokeWidthRef.current,
+        );
         createdLayers.push(layer);
         return layer;
       });
@@ -413,6 +472,7 @@ export default function Animator() {
       document.removeEventListener("visibilitychange", syncWhenVisible);
       syncControllerRef.current?.abort();
       uploadControllerRef.current?.abort();
+      styleControllerRef.current?.abort();
       syncingRef.current = false;
       previewGenerationRef.current += 1;
       if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
@@ -424,6 +484,67 @@ export default function Animator() {
       uploadedLayersRef.current = [];
     };
   }, [sync]);
+
+  useEffect(() => {
+    const targetStyleKey = getStyleKey(strokeColor, strokeWidth);
+    if (layers.every((layer) => layer.styleKey === targetStyleKey)) return;
+
+    styleControllerRef.current?.abort();
+    const controller = new AbortController();
+    styleControllerRef.current = controller;
+
+    void mapWithConcurrency(layers, 8, async (layer) => {
+      if (layer.styleKey === targetStyleKey) return { original: layer };
+      try {
+        return {
+          original: layer,
+          styled: await createStyledLayer(
+            layer,
+            layer.sourceSvg,
+            strokeColor,
+            strokeWidth,
+            controller.signal,
+          ),
+        };
+      } catch (error) {
+        return { original: layer, error };
+      }
+    }).then((results) => {
+      const styledResults = results.filter(
+        (result): result is typeof result & { styled: Layer } =>
+          "styled" in result,
+      );
+      if (
+        controller.signal.aborted ||
+        results.some((result) => "error" in result)
+      ) {
+        for (const result of styledResults) releaseLayer(result.styled);
+        return;
+      }
+
+      const replacements = new Map(
+        styledResults.map((result) => [result.original.id, result]),
+      );
+      discardExportPreview();
+      setLayers((current) => {
+        const used = new Set<string>();
+        const next = current.map((layer) => {
+          const replacement = replacements.get(layer.id);
+          if (!replacement || replacement.original !== layer) return layer;
+          used.add(layer.id);
+          releaseLayer(layer);
+          layerCacheRef.current.set(layer.id, replacement.styled);
+          return replacement.styled;
+        });
+        for (const result of styledResults) {
+          if (!used.has(result.original.id)) releaseLayer(result.styled);
+        }
+        return next;
+      });
+    });
+
+    return () => controller.abort();
+  }, [discardExportPreview, layers, strokeColor, strokeWidth]);
 
   useEffect(() => {
     if (!playing || animationLayers.length === 0) return;
@@ -498,6 +619,29 @@ export default function Animator() {
     discardExportPreview();
     setSpeedInput(value);
     setFrame(0);
+  };
+
+  const changeStrokeWidth = (value: string) => {
+    discardExportPreview();
+    setStrokeWidthInput(value);
+    setFrame(0);
+  };
+
+  const changeStrokeColor = (value: string) => {
+    discardExportPreview();
+    const normalized = normalizeStrokeColor(value);
+    setStrokeColor(normalized);
+    setStrokeColorInput(normalized);
+    setFrame(0);
+  };
+
+  const changeStrokeColorInput = (value: string) => {
+    discardExportPreview();
+    setStrokeColorInput(value);
+    if (/^#[0-9a-f]{6}$/i.test(value)) {
+      setStrokeColor(normalizeStrokeColor(value));
+      setFrame(0);
+    }
   };
 
   const changeGridOpacity = (value: number) => {
@@ -754,6 +898,54 @@ export default function Animator() {
               <span>ms</span>
             </span>
           </label>
+          {mode !== "grid-v2" ? (
+            <>
+              <label className="animator-input-row">
+                <span className="animator-label">stroke width</span>
+                <span className="animator-input-value">
+                  <input
+                    type="number"
+                    min={MIN_STROKE_WIDTH.toFixed(2)}
+                    max={MAX_STROKE_WIDTH.toFixed(2)}
+                    step="0.01"
+                    value={strokeWidthInput}
+                    onChange={(event) =>
+                      changeStrokeWidth(event.currentTarget.value)
+                    }
+                    onBlur={() =>
+                      setStrokeWidthInput(strokeWidth.toFixed(2))
+                    }
+                    aria-label="Stroke width in pixels"
+                  />
+                  <span>px</span>
+                </span>
+              </label>
+              <label className="animator-input-row">
+                <span className="animator-label">stroke colour</span>
+                <span className="animator-color-value">
+                  <input
+                    type="color"
+                    value={strokeColor}
+                    onChange={(event) =>
+                      changeStrokeColor(event.currentTarget.value)
+                    }
+                    aria-label="Stroke colour picker"
+                  />
+                  <input
+                    type="text"
+                    value={strokeColorInput}
+                    maxLength={7}
+                    spellCheck="false"
+                    onChange={(event) =>
+                      changeStrokeColorInput(event.currentTarget.value)
+                    }
+                    onBlur={() => setStrokeColorInput(strokeColor)}
+                    aria-label="Stroke colour hex value"
+                  />
+                </span>
+              </label>
+            </>
+          ) : null}
           {isGridMode(mode) ? (
             <label className="animator-input-row">
               <span className="animator-label">grid opacity</span>

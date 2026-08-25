@@ -509,10 +509,16 @@ button {
 
 .animator-tools {
   display: flex;
+  overflow-y: auto;
   flex-direction: column;
   justify-content: flex-start;
   gap: 28px;
   padding-bottom: 26px;
+  scrollbar-width: none;
+}
+
+.animator-tools::-webkit-scrollbar {
+  display: none;
 }
 
 .animator-tool-group {
@@ -577,6 +583,48 @@ button {
   color: var(--ink);
   font: inherit;
   font-size: 12px;
+}
+
+.animator-color-value {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.animator-color-value input[type="color"] {
+  width: 42px;
+  height: 34px;
+  border: 1px solid rgba(23, 23, 19, 0.22);
+  border-radius: 0;
+  padding: 3px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.animator-color-value input[type="text"] {
+  width: 82px;
+  min-height: 34px;
+  border: 1px solid rgba(23, 23, 19, 0.22);
+  border-radius: 0;
+  padding: 0 7px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.animator-color-value input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.animator-color-value input[type="color"]::-webkit-color-swatch {
+  border: 0;
 }
 
 .animator-upload-row {
@@ -834,6 +882,7 @@ button {
 .animator-page button:focus-visible,
 .animator-page a:focus-visible,
 .animator-input-value input:focus-visible,
+.animator-color-value input:focus-visible,
 .animator-layer-list input:focus-visible,
 .animation-export-preview video:focus-visible {
   outline: 1px solid var(--ink);

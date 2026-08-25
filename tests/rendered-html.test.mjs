@@ -214,6 +214,13 @@ test("renders the 5A animation tool", async () => {
   assert.match(animator, /const GRID_COLUMNS = 5;/);
   assert.match(animator, /const GRID_ROWS = 10;/);
   assert.match(animator, /aria-label="Animation speed in milliseconds"/);
+  assert.match(animator, /aria-label="Stroke width in pixels"/);
+  assert.match(animator, /aria-label="Stroke colour picker"/);
+  assert.match(animator, /aria-label="Stroke colour hex value"/);
+  assert.match(animator, /step="0\.01"/);
+  assert.match(animator, /MIN_STROKE_WIDTH\.toFixed\(2\)/);
+  assert.match(animator, /MAX_STROKE_WIDTH\.toFixed\(2\)/);
+  assert.match(animator, /styleSvgStroke/);
   assert.match(animator, /aria-label="Grid opacity percentage"/);
   assert.match(animator, /context\.globalAlpha = gridOpacity;/);
   assert.match(animator, /context\.strokeStyle = GRID_COLOR;/);
