@@ -1,6 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  GRID_TICK_MS,
+  MAX_GRID_DWELL_MS,
+  MIN_GRID_DWELL_MS,
+  buildGridTimeline,
+} from "./grid";
 
 type AnimationMode = "blink" | "solo" | "grid";
 
@@ -161,6 +167,7 @@ function drawFrame(
   layers: Layer[],
   mode: AnimationMode,
   frame: number,
+  gridTimeline: number[][],
 ) {
   context.save();
   context.globalAlpha = 1;
@@ -193,11 +200,15 @@ function drawFrame(
   } else {
     const cellWidth = WIDTH / GRID_COLUMNS;
     const cellHeight = HEIGHT / GRID_ROWS;
+    const gridFrame =
+      gridTimeline.length > 0
+        ? gridTimeline[frame % gridTimeline.length]
+        : null;
 
     for (let cell = 0; cell < GRID_CELLS; cell += 1) {
       const column = cell % GRID_COLUMNS;
       const row = Math.floor(cell / GRID_COLUMNS);
-      const layer = layers[(cell + frame) % layers.length];
+      const layer = layers[gridFrame?.[cell] ?? cell % layers.length];
 
       context.save();
       context.beginPath();
@@ -227,6 +238,7 @@ export default function Animator() {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<AnimationMode>("blink");
   const [frame, setFrame] = useState(0);
+  const [gridSeed, setGridSeed] = useState(() => Date.now() >>> 0);
   const [playing, setPlaying] = useState(true);
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
@@ -240,6 +252,15 @@ export default function Animator() {
   const visibleLayers = useMemo(
     () => layers.filter((layer) => !hidden.has(layer.id)),
     [hidden, layers],
+  );
+  const gridTimeline = useMemo(
+    () =>
+      buildGridTimeline(
+        visibleLayers.map(({ id }) => id),
+        GRID_CELLS,
+        gridSeed,
+      ),
+    [gridSeed, visibleLayers],
   );
 
   const discardExportPreview = useCallback(() => {
@@ -325,20 +346,23 @@ export default function Animator() {
     if (!playing || visibleLayers.length === 0) return;
     const interval = window.setInterval(
       () => setFrame((current) => current + 1),
-      FRAME_MS,
+      mode === "grid" ? GRID_TICK_MS : FRAME_MS,
     );
     return () => window.clearInterval(interval);
-  }, [playing, visibleLayers.length]);
+  }, [mode, playing, visibleLayers.length]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const context = canvas?.getContext("2d");
     if (!context) return;
-    drawFrame(context, visibleLayers, mode, frame);
-  }, [frame, mode, visibleLayers]);
+    drawFrame(context, visibleLayers, mode, frame, gridTimeline);
+  }, [frame, gridTimeline, mode, visibleLayers]);
 
   const changeMode = (nextMode: AnimationMode) => {
-    if (nextMode !== mode) discardExportPreview();
+    if (nextMode !== mode || nextMode === "grid") discardExportPreview();
+    if (nextMode === "grid") {
+      setGridSeed((current) => (current + 0x9e3779b9) >>> 0);
+    }
     setMode(nextMode);
     setFrame(0);
     setPlaying(true);
@@ -366,6 +390,14 @@ export default function Animator() {
     setHidden(new Set(layers.map((layer) => layer.id)));
     setFrame(0);
     setPlaying(false);
+  };
+
+  const restart = () => {
+    if (mode === "grid") {
+      discardExportPreview();
+      setGridSeed((current) => (current + 0x9e3779b9) >>> 0);
+    }
+    setFrame(0);
   };
 
   const previewAnimation = async () => {
@@ -413,9 +445,14 @@ export default function Animator() {
       output.addVideoTrack(source, { frameRate: 10 });
       await output.start();
 
-      for (let exportFrame = 0; exportFrame < visibleLayers.length; exportFrame += 1) {
-        drawFrame(context, visibleLayers, mode, exportFrame);
-        await source.add(exportFrame * FRAME_SECONDS, FRAME_SECONDS, {
+      const exportFrameCount =
+        mode === "grid" ? gridTimeline.length : visibleLayers.length;
+      const exportFrameSeconds =
+        mode === "grid" ? GRID_TICK_MS / 1000 : FRAME_SECONDS;
+
+      for (let exportFrame = 0; exportFrame < exportFrameCount; exportFrame += 1) {
+        drawFrame(context, visibleLayers, mode, exportFrame, gridTimeline);
+        await source.add(exportFrame * exportFrameSeconds, exportFrameSeconds, {
           keyFrame: exportFrame === 0,
         });
       }
@@ -445,9 +482,11 @@ export default function Animator() {
     anchor.remove();
   };
 
-  const cycleSeconds = (visibleLayers.length * FRAME_MS) / 1000;
-  const activeLayer =
-    visibleLayers.length > 0 ? (frame % visibleLayers.length) + 1 : 0;
+  const previewFrameCount =
+    mode === "grid" ? gridTimeline.length : visibleLayers.length;
+  const previewFrameMs = mode === "grid" ? GRID_TICK_MS : FRAME_MS;
+  const cycleSeconds = (previewFrameCount * previewFrameMs) / 1000;
+  const activeFrame = previewFrameCount > 0 ? (frame % previewFrameCount) + 1 : 0;
 
   return (
     <main className="animator-page" aria-busy={status === "loading"}>
@@ -504,15 +543,17 @@ export default function Animator() {
             <button
               type="button"
               disabled={visibleLayers.length === 0}
-              onClick={() => setFrame(0)}
+              onClick={restart}
             >
               restart
             </button>
           </div>
           <p>
-            frame {activeLayer} / {visibleLayers.length}
+            frame {activeFrame} / {previewFrameCount}
             <br />
-            300 ms · {cycleSeconds.toFixed(1)} s loop
+            {mode === "grid"
+              ? `${MIN_GRID_DWELL_MS}–${MAX_GRID_DWELL_MS} ms per block`
+              : `${FRAME_MS} ms`} · {cycleSeconds.toFixed(1)} s loop
           </p>
         </div>
 
