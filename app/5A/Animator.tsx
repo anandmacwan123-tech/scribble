@@ -20,19 +20,33 @@ type DrawingPage = {
 
 type Layer = Drawing & {
   image: HTMLImageElement;
+  greyImage: HTMLImageElement;
+  objectUrls: [string, string];
 };
 
-const WIDTH = 1000;
-const HEIGHT = 700;
+const SOURCE_WIDTH = 1000;
+const SOURCE_HEIGHT = 700;
+const WIDTH = 700;
+const HEIGHT = 1000;
 const FRAME_MS = 300;
+const FRAME_SECONDS = FRAME_MS / 1000;
 const GRID_COLUMNS = 5;
 const GRID_ROWS = 10;
 const GRID_CELLS = GRID_COLUMNS * GRID_ROWS;
 const SYNC_INTERVAL_MS = 10_000;
-const PAPER = "#f2f0ea";
+const BACKGROUND = "#FFFFFF";
+const GREY = "#CCCCCC";
+const DRAWING_SCALE = Math.min(
+  WIDTH / SOURCE_WIDTH,
+  HEIGHT / SOURCE_HEIGHT,
+);
+const DRAWING_WIDTH = SOURCE_WIDTH * DRAWING_SCALE;
+const DRAWING_HEIGHT = SOURCE_HEIGHT * DRAWING_SCALE;
+const DRAWING_X = (WIDTH - DRAWING_WIDTH) / 2;
+const DRAWING_Y = (HEIGHT - DRAWING_HEIGHT) / 2;
 
 const modeCopy: Record<AnimationMode, string> = {
-  blink: "all at 20%; one turns black",
+  blink: "all #CCCCCC; one turns black",
   solo: "one black five at a time",
   grid: "5 × 10 masks; sources shift",
 };
@@ -70,7 +84,7 @@ async function loadAllDrawings(signal: AbortSignal) {
   return drawings;
 }
 
-function loadImage(drawing: Drawing, signal: AbortSignal) {
+function loadImage(source: string, signal: AbortSignal) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
     const abort = () => {
@@ -87,8 +101,46 @@ function loadImage(drawing: Drawing, signal: AbortSignal) {
       signal.removeEventListener("abort", abort);
       reject(new Error("image failed"));
     };
-    image.src = versionedPreview(drawing);
+    image.src = source;
   });
+}
+
+async function loadLayer(drawing: Drawing, signal: AbortSignal) {
+  const response = await fetch(versionedPreview(drawing), {
+    cache: "no-store",
+    signal,
+  });
+  if (!response.ok) throw new Error("image failed");
+
+  const svg = await response.text();
+  const greySvg = svg.replace(/#171713/gi, GREY);
+  const imageUrl = URL.createObjectURL(
+    new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
+  );
+  const greyImageUrl = URL.createObjectURL(
+    new Blob([greySvg], { type: "image/svg+xml;charset=utf-8" }),
+  );
+
+  try {
+    const [image, greyImage] = await Promise.all([
+      loadImage(imageUrl, signal),
+      loadImage(greyImageUrl, signal),
+    ]);
+    return {
+      ...drawing,
+      image,
+      greyImage,
+      objectUrls: [imageUrl, greyImageUrl] as [string, string],
+    };
+  } catch (error) {
+    URL.revokeObjectURL(imageUrl);
+    URL.revokeObjectURL(greyImageUrl);
+    throw error;
+  }
+}
+
+function releaseLayer(layer: Layer) {
+  for (const url of layer.objectUrls) URL.revokeObjectURL(url);
 }
 
 async function mapWithConcurrency<T, R>(
@@ -122,7 +174,7 @@ function drawFrame(
 ) {
   context.save();
   context.globalAlpha = 1;
-  context.fillStyle = PAPER;
+  context.fillStyle = BACKGROUND;
   context.fillRect(0, 0, WIDTH, HEIGHT);
 
   if (layers.length === 0) {
@@ -131,16 +183,23 @@ function drawFrame(
   }
 
   const activeIndex = frame % layers.length;
+  const drawLayer = (layer: Layer, grey = false) => {
+    context.drawImage(
+      grey ? layer.greyImage : layer.image,
+      DRAWING_X,
+      DRAWING_Y,
+      DRAWING_WIDTH,
+      DRAWING_HEIGHT,
+    );
+  };
 
   if (mode === "blink") {
-    context.globalAlpha = 0.2;
     for (const layer of layers) {
-      context.drawImage(layer.image, 0, 0, WIDTH, HEIGHT);
+      drawLayer(layer, true);
     }
-    context.globalAlpha = 1;
-    context.drawImage(layers[activeIndex].image, 0, 0, WIDTH, HEIGHT);
+    drawLayer(layers[activeIndex]);
   } else if (mode === "solo") {
-    context.drawImage(layers[activeIndex].image, 0, 0, WIDTH, HEIGHT);
+    drawLayer(layers[activeIndex]);
   } else {
     const cellWidth = WIDTH / GRID_COLUMNS;
     const cellHeight = HEIGHT / GRID_ROWS;
@@ -159,27 +218,12 @@ function drawFrame(
         cellHeight,
       );
       context.clip();
-      context.drawImage(layer.image, 0, 0, WIDTH, HEIGHT);
+      drawLayer(layer);
       context.restore();
     }
   }
 
   context.restore();
-}
-
-function preferredRecordingType() {
-  if (typeof MediaRecorder === "undefined") return null;
-  const types = [
-    "video/webm;codecs=vp9",
-    "video/webm;codecs=vp8",
-    "video/webm",
-    "video/mp4",
-  ];
-  return types.find((type) => MediaRecorder.isTypeSupported(type)) ?? null;
-}
-
-function wait(milliseconds: number) {
-  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 export default function Animator() {
@@ -211,6 +255,7 @@ export default function Animator() {
     syncControllerRef.current?.abort();
     const controller = new AbortController();
     syncControllerRef.current = controller;
+    const createdLayers: Layer[] = [];
 
     try {
       const drawings = await loadAllDrawings(controller.signal);
@@ -218,9 +263,14 @@ export default function Animator() {
       const nextLayers = await mapWithConcurrency(drawings, 8, async (drawing) => {
         const cached = currentCache.get(drawing.id);
         if (cached?.updatedAt === drawing.updatedAt) return cached;
-        return { ...drawing, image: await loadImage(drawing, controller.signal) };
+        const layer = await loadLayer(drawing, controller.signal);
+        createdLayers.push(layer);
+        return layer;
       });
       const nextCache = new Map(nextLayers.map((layer) => [layer.id, layer]));
+      for (const [id, layer] of currentCache) {
+        if (nextCache.get(id) !== layer) releaseLayer(layer);
+      }
       layerCacheRef.current = nextCache;
       setLayers(nextLayers);
       setHidden((current) => {
@@ -230,6 +280,7 @@ export default function Animator() {
       setLastSyncedAt(new Date());
       setStatus("ready");
     } catch (error) {
+      for (const layer of createdLayers) releaseLayer(layer);
       if (!(error instanceof DOMException && error.name === "AbortError")) {
         setStatus("error");
       }
@@ -254,6 +305,9 @@ export default function Animator() {
       window.removeEventListener("focus", syncWhenVisible);
       document.removeEventListener("visibilitychange", syncWhenVisible);
       syncControllerRef.current?.abort();
+      syncingRef.current = false;
+      for (const layer of layerCacheRef.current.values()) releaseLayer(layer);
+      layerCacheRef.current.clear();
     };
   }, [sync]);
 
@@ -302,9 +356,7 @@ export default function Animator() {
 
   const exportAnimation = async () => {
     if (visibleLayers.length === 0 || exportStatus === "recording") return;
-    const mimeType = preferredRecordingType();
-    const sourceCanvas = canvasRef.current;
-    if (!mimeType || !sourceCanvas || !("captureStream" in sourceCanvas)) {
+    if (typeof VideoEncoder === "undefined") {
       setExportStatus("unsupported");
       return;
     }
@@ -319,44 +371,48 @@ export default function Animator() {
       return;
     }
 
-    const stream = exportCanvas.captureStream(30);
-    const recorder = new MediaRecorder(stream, {
-      mimeType,
-      videoBitsPerSecond: 8_000_000,
-    });
-    const chunks: Blob[] = [];
-    recorder.ondataavailable = (event) => {
-      if (event.data.size > 0) chunks.push(event.data);
-    };
-
-    const finished = new Promise<Blob>((resolve, reject) => {
-      recorder.onerror = () => reject(new Error("recording failed"));
-      recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
-    });
-
     try {
-      recorder.start();
+      const {
+        BufferTarget,
+        CanvasSource,
+        Mp4OutputFormat,
+        Output,
+        Quality,
+      } = await import("mediabunny");
+      const target = new BufferTarget();
+      const output = new Output({
+        format: new Mp4OutputFormat({ fastStart: "in-memory" }),
+        target,
+      });
+      const source = new CanvasSource(exportCanvas, {
+        codec: "avc",
+        quality: new Quality({ bitrate: 8_000_000 }),
+        keyFrameInterval: 2,
+      });
+      output.addVideoTrack(source, { frameRate: 10 });
+      await output.start();
+
       for (let exportFrame = 0; exportFrame < visibleLayers.length; exportFrame += 1) {
         drawFrame(context, visibleLayers, mode, exportFrame);
-        await wait(FRAME_MS);
+        await source.add(exportFrame * FRAME_SECONDS, FRAME_SECONDS, {
+          keyFrame: exportFrame === 0,
+        });
       }
-      recorder.stop();
-      const blob = await finished;
+      await output.finalize();
+      if (!target.buffer) throw new Error("empty export");
+
+      const blob = new Blob([target.buffer], { type: "video/mp4" });
       const href = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
-      const extension = mimeType.includes("mp4") ? "mp4" : "webm";
       anchor.href = href;
-      anchor.download = `5A-${mode}-${WIDTH}x${HEIGHT}.${extension}`;
+      anchor.download = `5A-${mode}-${WIDTH}x${HEIGHT}.mp4`;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(href), 0);
       setExportStatus("idle");
     } catch {
-      if (recorder.state !== "inactive") recorder.stop();
       setExportStatus("error");
-    } finally {
-      for (const track of stream.getTracks()) track.stop();
     }
   };
 
@@ -438,9 +494,9 @@ export default function Animator() {
             disabled={visibleLayers.length === 0 || exportStatus === "recording"}
             onClick={() => void exportAnimation()}
           >
-            {exportStatus === "recording" ? "recording loop…" : "export animation"}
+            {exportStatus === "recording" ? "encoding mp4…" : "export mp4"}
           </button>
-          <p>A4 canvas · {WIDTH} × {HEIGHT}</p>
+          <p>A4 portrait · {WIDTH} × {HEIGHT} · white</p>
           {exportStatus === "unsupported" ? (
             <p className="animator-error">animation export isn’t supported here.</p>
           ) : null}

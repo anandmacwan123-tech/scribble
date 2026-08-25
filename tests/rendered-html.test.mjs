@@ -155,11 +155,17 @@ test("renders the 5A animation tool", async () => {
     "utf8",
   );
   assert.match(animator, /const FRAME_MS = 300;/);
+  assert.match(animator, /const WIDTH = 700;/);
+  assert.match(animator, /const HEIGHT = 1000;/);
+  assert.match(animator, /const BACKGROUND = "#FFFFFF";/);
+  assert.match(animator, /const GREY = "#CCCCCC";/);
   assert.match(animator, /const GRID_COLUMNS = 5;/);
   assert.match(animator, /const GRID_ROWS = 10;/);
   assert.match(animator, /const SYNC_INTERVAL_MS = 10_000;/);
   assert.match(animator, /while \(cursor\)/);
-  assert.match(animator, /captureStream\(30\)/);
+  assert.match(animator, /new Mp4OutputFormat/);
+  assert.match(animator, /type: "video\/mp4"/);
+  assert.match(animator, /\.mp4`/);
 });
 
 test("constructs canonical SVG on the server and writes it to D1", async () => {
