@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Drawing = {
   id: string;
@@ -13,7 +13,7 @@ type DrawingPage = {
   nextCursor: string | null;
 };
 
-const MAX_SELECTION = 50;
+const MAX_BULK_SELECTION = 500;
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -34,53 +34,97 @@ export default function Gallery() {
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [downloadFailed, setDownloadFailed] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [confirmation, setConfirmation] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [deletedCount, setDeletedCount] = useState<number | null>(null);
+  const deleteDialogRef = useRef<HTMLDialogElement>(null);
+  const deleteInputRef = useRef<HTMLInputElement>(null);
+  const deleteTriggerRef = useRef<HTMLButtonElement>(null);
+  const deleteStatusRef = useRef<HTMLParagraphElement>(null);
+  const deleteFocusTargetRef = useRef<"trigger" | "status">("trigger");
 
   useEffect(() => {
     const controller = new AbortController();
 
-    void loadPage(null, controller.signal)
-      .then((page) => {
-        setDrawings(page.drawings);
-        setNextCursor(page.nextCursor);
+    void (async () => {
+      const loaded = new Map<string, Drawing>();
+      const visitedCursors = new Set<string>();
+      let cursor: string | null = null;
+
+      do {
+        const page = await loadPage(cursor, controller.signal);
+        for (const drawing of page.drawings) loaded.set(drawing.id, drawing);
+        setDrawings([...loaded.values()]);
+
+        cursor = page.nextCursor;
+        if (cursor && visitedCursors.has(cursor)) {
+          throw new Error("repeated cursor");
+        }
+        if (cursor) visitedCursors.add(cursor);
+      } while (cursor);
+
+      if (!controller.signal.aborted) {
         setStatus("ready");
-      })
-      .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") return;
-        setStatus("error");
-      });
+      }
+    })().catch((error: unknown) => {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setStatus("error");
+    });
 
     return () => controller.abort();
   }, []);
 
-  const loadMore = async () => {
-    if (!nextCursor || loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const page = await loadPage(nextCursor);
-      setDrawings((current) => [...current, ...page.drawings]);
-      setNextCursor(page.nextCursor);
-      setStatus("ready");
-    } catch {
-      setStatus("error");
-    } finally {
-      setLoadingMore(false);
-    }
-  };
+  useEffect(() => {
+    const dialog = deleteDialogRef.current;
+    if (!dialog) return;
 
-  const selectedIds = useMemo(() => [...selected], [selected]);
-  const selectionFull = selected.size >= MAX_SELECTION;
+    if (deleteOpen && !dialog.open) {
+      dialog.showModal();
+      deleteInputRef.current?.focus();
+    } else if (!deleteOpen && dialog.open) {
+      dialog.close();
+      window.requestAnimationFrame(() => {
+        if (deleteFocusTargetRef.current === "status") {
+          deleteStatusRef.current?.focus();
+        } else {
+          deleteTriggerRef.current?.focus();
+        }
+      });
+    }
+  }, [deleteOpen]);
+
+  const selectedIds = useMemo(
+    () => drawings.filter(({ id }) => selected.has(id)).map(({ id }) => id),
+    [drawings, selected],
+  );
+  const allSelected =
+    drawings.length > 0 &&
+    selectedIds.length === Math.min(drawings.length, MAX_BULK_SELECTION);
+  const selectionFull = selectedIds.length >= MAX_BULK_SELECTION;
 
   const toggle = (id: string) => {
     setSelected((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
-      else if (next.size < MAX_SELECTION) next.add(id);
+      else if (next.size < MAX_BULK_SELECTION) next.add(id);
       return next;
     });
+  };
+
+  const toggleAll = () => {
+    setSelected(
+      allSelected
+        ? new Set()
+        : new Set(
+            drawings
+              .slice(0, MAX_BULK_SELECTION)
+              .map(({ id }) => id),
+          ),
+    );
   };
 
   const download = async () => {
@@ -111,10 +155,59 @@ export default function Gallery() {
     }
   };
 
+  const openDeleteDialog = () => {
+    deleteFocusTargetRef.current = "trigger";
+    setConfirmation("");
+    setDeleteError("");
+    setDeleteOpen(true);
+  };
+
+  const closeDeleteDialog = () => {
+    if (deleting) return;
+    setDeleteOpen(false);
+    setConfirmation("");
+    setDeleteError("");
+  };
+
+  const deleteAll = async () => {
+    if (confirmation !== "CONFIRM" || deleting) return;
+    setDeleting(true);
+    setDeleteError("");
+
+    try {
+      const response = await fetch("/api/admin/drawings", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ confirmation }),
+      });
+      if (!response.ok) {
+        setDeleteError(
+          response.status === 429
+            ? "Slow down and try again in a minute."
+            : "Couldn’t delete the responses. Try again.",
+        );
+        return;
+      }
+
+      const result = (await response.json()) as { deleted: number };
+      setDrawings([]);
+      setSelected(new Set());
+      setDeletedCount(result.deleted);
+      setStatus("ready");
+      deleteFocusTargetRef.current = "status";
+      setDeleteOpen(false);
+      setConfirmation("");
+    } catch {
+      setDeleteError("Couldn’t delete the responses. Try again.");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <main
       className="gallery-page"
-      aria-busy={status === "loading" || loadingMore || downloading}
+      aria-busy={status === "loading" || downloading || deleting}
     >
       <nav className="gallery-nav" aria-label="Gallery controls">
         {/* A plain document navigation avoids retaining gallery selection state. */}
@@ -126,7 +219,23 @@ export default function Gallery() {
           <button
             className="gallery-control"
             type="button"
-            disabled={selectedIds.length === 0 || downloading}
+            disabled={
+              status !== "ready" || drawings.length === 0 || downloading
+            }
+            onClick={toggleAll}
+          >
+            {allSelected
+              ? "clear"
+              : drawings.length > MAX_BULK_SELECTION
+                ? `select ${MAX_BULK_SELECTION}`
+                : "select all"}
+          </button>
+          <button
+            className="gallery-control"
+            type="button"
+            disabled={
+              status !== "ready" || selectedIds.length === 0 || downloading
+            }
             onClick={download}
           >
             {downloading
@@ -134,6 +243,20 @@ export default function Gallery() {
               : selectedIds.length > 0
                 ? `download · ${selectedIds.length}`
                 : "download"}
+          </button>
+          <button
+            ref={deleteTriggerRef}
+            className="gallery-control"
+            type="button"
+            disabled={
+              status !== "ready" ||
+              drawings.length === 0 ||
+              downloading ||
+              deleting
+            }
+            onClick={openDeleteDialog}
+          >
+            delete all
           </button>
         </div>
       </nav>
@@ -150,6 +273,20 @@ export default function Gallery() {
       ) : null}
       {downloadFailed ? (
         <p className="gallery-state">couldn’t prepare.</p>
+      ) : null}
+      {deletedCount !== null ? (
+        <p
+          ref={deleteStatusRef}
+          className="gallery-state"
+          role="status"
+          aria-live="polite"
+          tabIndex={-1}
+        >
+          {deletedCount} {deletedCount === 1 ? "response" : "responses"} deleted.
+        </p>
+      ) : null}
+      {status === "ready" && drawings.length > MAX_BULK_SELECTION ? (
+        <p className="gallery-state">{MAX_BULK_SELECTION} per download.</p>
       ) : null}
       {status === "ready" && drawings.length === 0 ? (
         <p className="gallery-state">nothing yet.</p>
@@ -194,18 +331,62 @@ export default function Gallery() {
         </ul>
       ) : null}
 
-      {nextCursor ? (
-        <div className="gallery-more">
+      <dialog
+        ref={deleteDialogRef}
+        className="delete-dialog"
+        aria-labelledby="delete-title"
+        aria-describedby="delete-description"
+        onCancel={(event) => {
+          event.preventDefault();
+          closeDeleteDialog();
+        }}
+        onClose={() => {
+          setDeleteOpen(false);
+          setConfirmation("");
+          setDeleteError("");
+        }}
+      >
+        <h2 id="delete-title">Delete all responses?</h2>
+        <p id="delete-description">
+          This permanently deletes every saved response. Type CONFIRM to continue.
+        </p>
+        <label className="delete-label">
+          Type CONFIRM
+          <input
+            ref={deleteInputRef}
+            className="delete-input"
+            type="text"
+            value={confirmation}
+            autoComplete="off"
+            spellCheck={false}
+            disabled={deleting}
+            onChange={(event) => setConfirmation(event.target.value)}
+          />
+        </label>
+        {deleteError ? (
+          <p className="delete-error" role="alert">
+            {deleteError}
+          </p>
+        ) : null}
+        <div className="delete-dialog-actions">
           <button
             className="gallery-control"
             type="button"
-            disabled={loadingMore}
-            onClick={loadMore}
+            disabled={deleting}
+            onClick={closeDeleteDialog}
           >
-            {loadingMore ? "loading…" : "more"}
+            Cancel
+          </button>
+          <button
+            className="gallery-control"
+            type="button"
+            disabled={confirmation !== "CONFIRM" || deleting}
+            onClick={deleteAll}
+          >
+            {deleting ? "Deleting…" : "Delete all"}
           </button>
         </div>
-      ) : null}
+      </dialog>
     </main>
   );
 }

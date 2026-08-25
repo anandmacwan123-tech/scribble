@@ -1,8 +1,12 @@
 # Scribble
 
-A quiet, full-screen drawing prompt. Each accepted gesture reveals the next
-line of copy. When the sequence is complete, the Worker converts the validated
-point data into canonical SVG and saves it in Cloudflare D1.
+A quiet A4-portrait page for drawing fives. Submit becomes available after the
+first valid mark, while the page stays open for more marks with Undo, Redo, and
+Clear all controls. The 10% dot grid and zoom are view-only; submitted sheets are
+stored in Cloudflare D1 as one canonical 1 pt SVG path. The drawing page previews
+the three newest submissions at its
+right edge. `/5` lists every kept sheet with its timestamp, bulk export, and a
+delete-all action that requires the exact confirmation text `CONFIRM`.
 
 ## Local development
 
@@ -27,12 +31,12 @@ npm test
 
 ## Deploy
 
-Create the production D1 database, replace the placeholder database ID in
-`wrangler.jsonc`, apply migrations remotely, build, and deploy:
+Authenticate with the Cloudflare account that owns the configured D1 database,
+apply any pending migrations, build, and deploy:
 
 ```bash
-npm exec -- wrangler d1 create scribble-db
+npm exec -- wrangler whoami
 npm exec -- wrangler d1 migrations apply scribble-db --remote
 npm run build
-npm exec -- wrangler deploy
+npm exec -- wrangler deploy --strict --keep-vars
 ```

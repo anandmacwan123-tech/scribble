@@ -24,8 +24,8 @@ type Layer = Drawing & {
   objectUrls: [string, string];
 };
 
-const WIDTH = 700;
-const HEIGHT = 1000;
+const WIDTH = 595;
+const HEIGHT = 842;
 const FRAME_MS = 300;
 const FRAME_SECONDS = FRAME_MS / 1000;
 const GRID_COLUMNS = 5;
@@ -174,14 +174,12 @@ function drawFrame(
 
   const activeIndex = frame % layers.length;
   const drawLayer = (layer: Layer, grey = false) => {
-    const x = (WIDTH - layer.width) / 2;
-    const y = (HEIGHT - layer.height) / 2;
     context.drawImage(
       grey ? layer.greyImage : layer.image,
-      x,
-      y,
-      layer.width,
-      layer.height,
+      0,
+      0,
+      WIDTH,
+      HEIGHT,
     );
   };
 

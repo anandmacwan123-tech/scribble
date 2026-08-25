@@ -98,3 +98,7 @@ export async function findDrawingsByIds(
       .all<DrawingRow>()
   ).results;
 }
+
+export function deleteAllDrawings(database: D1Database) {
+  return database.prepare("DELETE FROM drawings").run();
+}
