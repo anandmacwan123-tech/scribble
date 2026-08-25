@@ -208,7 +208,9 @@ test("renders the 5A animation tool", async () => {
   assert.match(animator, /const DEFAULT_SPEED_MS = 300;/);
   assert.match(animator, /const WIDTH = 595;/);
   assert.match(animator, /const HEIGHT = 842;/);
-  assert.match(animator, /const ENCODE_WIDTH = WIDTH \+ \(WIDTH % 2\);/);
+  assert.match(animator, /const EXPORT_WIDTH = WIDTH \* 2;/);
+  assert.match(animator, /const EXPORT_HEIGHT = HEIGHT \* 2;/);
+  assert.match(animator, /const ENCODE_WIDTH = EXPORT_WIDTH \+ \(EXPORT_WIDTH % 2\);/);
   assert.match(animator, /const BACKGROUND = "#FFFFFF";/);
   assert.match(animator, /const GREY = "#CCCCCC";/);
   assert.match(animator, /const GRID_COLUMNS = 5;/);
@@ -235,10 +237,11 @@ test("renders the 5A animation tool", async () => {
   assert.doesNotMatch(animator, /DRAWING_SCALE|DRAWING_WIDTH|DRAWING_HEIGHT|layer\.width|layer\.height/);
   assert.match(animator, /new Mp4OutputFormat/);
   assert.match(animator, /new VideoSampleSource/);
-  assert.match(animator, /displayWidth: WIDTH/);
-  assert.match(animator, /displayHeight: HEIGHT/);
+  assert.match(animator, /displayWidth: EXPORT_WIDTH/);
+  assert.match(animator, /displayHeight: EXPORT_HEIGHT/);
   assert.match(animator, /type: "video\/mp4"/);
   assert.match(animator, /preview mp4/i);
+  assert.match(animator, /MP4 export preview at \$\{EXPORT_WIDTH\} by \$\{EXPORT_HEIGHT\}/);
   assert.match(animator, /<video/);
   assert.match(animator, /downloadPreview/);
   assert.match(animator, /URL\.createObjectURL\(blob\)/);
@@ -249,6 +252,8 @@ test("renders the 5A animation tool", async () => {
     "utf8",
   );
   assert.match(css, /\.animation-paper\s*\{[\s\S]*?aspect-ratio:\s*595\s*\/\s*842;[\s\S]*?flex:\s*0\s+0\s+auto;/);
+  assert.match(css, /\.animator-page\s*\{[\s\S]*?background:\s*#000;[\s\S]*?color:\s*#fff;/);
+  assert.match(css, /\.animation-paper\s*\{[\s\S]*?background:\s*#fff;/);
 });
 
 test("constructs canonical SVG on the server and writes it to D1", async () => {

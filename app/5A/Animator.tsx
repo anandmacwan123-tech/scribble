@@ -50,8 +50,10 @@ type UploadedLayer = AnimationLayer & {
 
 const WIDTH = 595;
 const HEIGHT = 842;
-const ENCODE_WIDTH = WIDTH + (WIDTH % 2);
-const ENCODE_HEIGHT = HEIGHT + (HEIGHT % 2);
+const EXPORT_WIDTH = WIDTH * 2;
+const EXPORT_HEIGHT = HEIGHT * 2;
+const ENCODE_WIDTH = EXPORT_WIDTH + (EXPORT_WIDTH % 2);
+const ENCODE_HEIGHT = EXPORT_HEIGHT + (EXPORT_HEIGHT % 2);
 const DEFAULT_SPEED_MS = 300;
 const MIN_SPEED_MS = 50;
 const MAX_SPEED_MS = 5000;
@@ -239,11 +241,13 @@ function drawFrame(
   frame: number,
   gridTimeline: GridTimelineFrame[],
   gridOpacity: number,
+  renderWidth = WIDTH,
+  renderHeight = HEIGHT,
 ) {
   context.save();
   context.globalAlpha = 1;
   context.fillStyle = BACKGROUND;
-  context.fillRect(0, 0, WIDTH, HEIGHT);
+  context.fillRect(0, 0, renderWidth, renderHeight);
 
   if (layers.length === 0) {
     context.restore();
@@ -256,8 +260,8 @@ function drawFrame(
     const rect = containImageRect(
       image.naturalWidth,
       image.naturalHeight,
-      WIDTH,
-      HEIGHT,
+      renderWidth,
+      renderHeight,
     );
     context.drawImage(
       image,
@@ -276,8 +280,8 @@ function drawFrame(
   } else if (mode === "solo") {
     drawLayer(layers[activeIndex]);
   } else {
-    const cellWidth = WIDTH / GRID_COLUMNS;
-    const cellHeight = HEIGHT / GRID_ROWS;
+    const cellWidth = renderWidth / GRID_COLUMNS;
+    const cellHeight = renderHeight / GRID_ROWS;
     const gridFrame =
       gridTimeline.length > 0
         ? gridTimeline[frame % gridTimeline.length].layerIndexes
@@ -303,17 +307,17 @@ function drawFrame(
     context.save();
     context.globalAlpha = gridOpacity;
     context.strokeStyle = GRID_COLOR;
-    context.lineWidth = 1;
+    context.lineWidth = renderWidth / WIDTH;
     context.beginPath();
     for (let column = 1; column < GRID_COLUMNS; column += 1) {
       const x = column * cellWidth;
       context.moveTo(x, 0);
-      context.lineTo(x, HEIGHT);
+      context.lineTo(x, renderHeight);
     }
     for (let row = 1; row < GRID_ROWS; row += 1) {
       const y = row * cellHeight;
       context.moveTo(0, y);
-      context.lineTo(WIDTH, y);
+      context.lineTo(renderWidth, y);
     }
     context.stroke();
     context.restore();
@@ -739,8 +743,8 @@ export default function Animator() {
     setPreviewUrl(null);
     setExportStatus("encoding");
     const exportCanvas = document.createElement("canvas");
-    exportCanvas.width = WIDTH;
-    exportCanvas.height = HEIGHT;
+    exportCanvas.width = EXPORT_WIDTH;
+    exportCanvas.height = EXPORT_HEIGHT;
     const context = exportCanvas.getContext("2d");
     if (!context) {
       setExportStatus("error");
@@ -771,7 +775,7 @@ export default function Animator() {
       });
       const source = new VideoSampleSource({
         codec: "avc",
-        quality: new Quality({ bitrate: 8_000_000 }),
+        quality: new Quality({ bitrate: 16_000_000 }),
         keyFrameInterval: 2,
       });
       output.addVideoTrack(source);
@@ -793,13 +797,15 @@ export default function Animator() {
           exportFrame,
           gridTimeline,
           gridOpacity,
+          EXPORT_WIDTH,
+          EXPORT_HEIGHT,
         );
         encoderContext.drawImage(
           exportCanvas,
           0,
           0,
-          WIDTH,
-          HEIGHT,
+          EXPORT_WIDTH,
+          EXPORT_HEIGHT,
           0,
           0,
           ENCODE_WIDTH,
@@ -808,8 +814,8 @@ export default function Animator() {
         const videoFrame = new VideoFrame(encoderCanvas, {
           timestamp: Math.round(exportTimestamp * 1_000_000),
           duration: Math.round(exportFrameSeconds * 1_000_000),
-          displayWidth: WIDTH,
-          displayHeight: HEIGHT,
+          displayWidth: EXPORT_WIDTH,
+          displayHeight: EXPORT_HEIGHT,
         });
         const sample = new VideoSample(videoFrame);
         try {
@@ -839,7 +845,7 @@ export default function Animator() {
     if (!previewUrlRef.current) return;
     const anchor = document.createElement("a");
     anchor.href = previewUrlRef.current;
-    anchor.download = `5A-${mode}-${WIDTH}x${HEIGHT}.mp4`;
+    anchor.download = `5A-${mode}-${EXPORT_WIDTH}x${EXPORT_HEIGHT}.mp4`;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
@@ -1050,7 +1056,7 @@ export default function Animator() {
                 muted
                 controls
                 playsInline
-                aria-label={`${mode} MP4 export preview`}
+                aria-label={`${mode} MP4 export preview at ${EXPORT_WIDTH} by ${EXPORT_HEIGHT}`}
               />
               <div className="animation-export-actions">
                 <button type="button" onClick={downloadPreview}>
