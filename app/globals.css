@@ -30,8 +30,11 @@ body {
 }
 
 body,
-button {
+button,
+input {
   font-family: "Futura", Arial, sans-serif;
+  font-style: normal;
+  font-weight: 400;
 }
 
 button {
@@ -44,12 +47,29 @@ button {
   background: var(--paper);
 }
 
+.canvas-stage {
+  --canvas-inline-width: calc(100vw - 32px);
+  position: fixed;
+  z-index: 1;
+  top: calc(50% - 60px);
+  left: 50%;
+  width: min(var(--canvas-inline-width), calc(70.66508314vh - 107.411px));
+  width: min(var(--canvas-inline-width), calc(70.66508314dvh - 107.411px));
+  aspect-ratio: 595 / 842;
+  overflow: hidden;
+  background-color: var(--paper);
+  box-shadow: 0 0 0 1pt rgba(23, 23, 19, 0.05);
+  transform: translate(-50%, -50%);
+}
+
 .instruction {
   position: fixed;
-  z-index: 2;
-  top: clamp(24px, 4vw, 52px);
-  left: clamp(24px, 4vw, 52px);
-  max-width: min(330px, calc(100vw - 112px));
+  z-index: 3;
+  bottom: max(68px, calc(env(safe-area-inset-bottom) + 56px));
+  left: 50%;
+  width: min(520px, calc(100vw - 48px));
+  text-align: center;
+  transform: translateX(-50%);
   pointer-events: none;
 }
 
@@ -62,54 +82,162 @@ button {
   animation: appear 180ms ease both;
 }
 
-.text-control,
-.clear-control {
+.drawing-status {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.drawing-control,
+.zoom-control {
   min-width: 44px;
   min-height: 44px;
   border: 0;
   background: transparent;
+  font-family: "Futura", Arial, sans-serif;
   font-size: 12px;
+  font-style: normal;
+  font-weight: 400;
   line-height: 1;
   letter-spacing: 0.08em;
-  text-transform: lowercase;
   cursor: pointer;
 }
 
-.text-control {
-  margin: 9px 0 0 -12px;
-  padding: 12px;
-  pointer-events: auto;
-}
-
-.clear-control {
+.drawing-controls {
   position: fixed;
   z-index: 3;
-  top: clamp(12px, calc(4vw - 12px), 40px);
-  right: clamp(12px, calc(4vw - 12px), 40px);
-  padding: 12px;
-  opacity: 0.44;
+  bottom: max(12px, calc(env(safe-area-inset-bottom) + 8px));
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transform: translateX(-50%);
 }
 
-.text-control:hover,
-.text-control:focus-visible,
-.clear-control:hover,
-.clear-control:focus-visible {
+.drawing-control {
+  padding: 0 14px;
+  opacity: 0.44;
+  text-transform: none;
+  touch-action: manipulation;
+}
+
+.drawing-control--history {
+  display: inline-grid;
+  width: 44px;
+  min-width: 44px;
+  padding: 0;
+  place-items: center;
+}
+
+.drawing-control--history svg {
+  width: 18px;
+  height: 18px;
+}
+
+.drawing-control--submit {
   opacity: 1;
 }
 
-.text-control:focus-visible,
-.clear-control:focus-visible {
+.drawing-control:disabled,
+.drawing-control[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.22;
+}
+
+.zoom-controls {
+  position: fixed;
+  z-index: 3;
+  right: clamp(12px, calc(4vw - 12px), 40px);
+  bottom: max(12px, calc(env(safe-area-inset-bottom) + 8px));
+  display: flex;
+  align-items: center;
+}
+
+.zoom-control {
+  display: inline-grid;
+  padding: 0;
+  place-items: center;
+  font-size: 16px;
+  opacity: 0.44;
+  touch-action: manipulation;
+}
+
+.zoom-control:disabled {
+  cursor: default;
+  opacity: 0.18;
+}
+
+.zoom-level {
+  min-width: 42px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  text-align: center;
+  pointer-events: none;
+}
+
+.recent-submissions {
+  position: fixed;
+  z-index: 3;
+  top: 50%;
+  right: clamp(8px, 2vw, 24px);
+  display: grid;
+  width: clamp(46px, 4.5vw, 64px);
+  gap: 8px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.recent-submission {
+  display: block;
+  overflow: hidden;
+  aspect-ratio: 595 / 842;
+  background: rgba(255, 255, 255, 0.24);
+  box-shadow: 0 0 0 1pt rgba(23, 23, 19, 0.05);
+  opacity: 1;
+}
+
+.recent-submission img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.drawing-control:hover:not(:disabled):not([aria-disabled="true"]),
+.drawing-control:focus-visible:not(:disabled):not([aria-disabled="true"]),
+.zoom-control:hover:not(:disabled),
+.zoom-control:focus-visible {
+  opacity: 1;
+}
+
+.drawing-control:focus-visible,
+.zoom-control:focus-visible {
   outline: 1px solid var(--ink);
   outline-offset: 2px;
 }
 
 .drawing-surface {
-  position: fixed;
-  z-index: 1;
-  inset: 0;
+  position: absolute;
+  z-index: 0;
+  top: 50%;
+  left: 50%;
   display: block;
   width: 100%;
   height: 100%;
+  aspect-ratio: 595 / 842;
+  background: transparent;
+  transform: translate(-50%, -50%);
+  transform-origin: center;
   touch-action: none;
   cursor: crosshair;
   outline: none;
@@ -119,6 +247,12 @@ button {
 
 .drawing-surface:focus-visible {
   box-shadow: inset 0 0 0 1px var(--muted);
+}
+
+.dot-grid {
+  color: var(--ink);
+  opacity: 0.1;
+  pointer-events: none;
 }
 
 .mark {
@@ -224,7 +358,7 @@ button {
 
 .gallery-preview {
   display: grid;
-  aspect-ratio: 10 / 7;
+  aspect-ratio: 595 / 842;
   place-items: center;
   border: 1px solid transparent;
   background: rgba(255, 255, 255, 0.24);
@@ -287,6 +421,76 @@ button {
   margin-top: clamp(36px, 5vw, 72px);
 }
 
+.delete-dialog {
+  width: min(420px, 100%);
+  max-height: calc(100dvh - 48px);
+  padding: clamp(24px, 4vw, 36px);
+  border: 1pt solid rgba(23, 23, 19, 0.1);
+  background: var(--paper);
+  color: var(--ink);
+  overflow-y: auto;
+}
+
+.delete-dialog::backdrop {
+  background: rgba(242, 240, 234, 0.94);
+}
+
+.delete-dialog h2,
+.delete-dialog p {
+  margin: 0;
+  font-weight: 400;
+}
+
+.delete-dialog h2 {
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.delete-dialog p {
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.delete-label {
+  display: grid;
+  gap: 8px;
+  margin-top: 24px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.delete-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid rgba(23, 23, 19, 0.18);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  outline: none;
+}
+
+.delete-input:focus-visible {
+  border-color: var(--ink);
+}
+
+.delete-error {
+  color: var(--ink) !important;
+}
+
+.delete-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+  margin-top: 20px;
+}
+
 @keyframes appear {
   from {
     opacity: 0;
@@ -298,9 +502,35 @@ button {
   }
 }
 
+@media (max-width: 700px), (max-aspect-ratio: 3 / 4) {
+  .canvas-stage {
+    --canvas-inline-width: calc(100vw - 104px);
+    left: calc(50% - 34px);
+  }
+
+  .recent-submissions {
+    right: 8px;
+    width: 44px;
+    gap: 6px;
+  }
+}
+
 @media (max-width: 600px) {
+  .canvas-stage {
+    top: calc(50% - 34px);
+    width: min(var(--canvas-inline-width), calc(70.66508314vh - 144.157px));
+    width: min(var(--canvas-inline-width), calc(70.66508314dvh - 144.157px));
+  }
+
   .instruction {
-    max-width: calc(100vw - 96px);
+    bottom: max(68px, calc(env(safe-area-inset-bottom) + 56px));
+    width: calc(100vw - 40px);
+  }
+
+  .zoom-controls {
+    top: max(12px, env(safe-area-inset-top));
+    right: 12px;
+    bottom: auto;
   }
 
   .gallery-nav {
