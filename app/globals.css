@@ -287,6 +287,315 @@ button {
   margin-top: clamp(36px, 5vw, 72px);
 }
 
+.animator-page {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-columns: minmax(150px, 190px) minmax(0, 1fr) minmax(210px, 260px);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: clamp(18px, 2.3vw, 36px);
+  padding: clamp(18px, 2.6vw, 40px);
+  background: #e9e7e0;
+}
+
+.animator-header {
+  z-index: 3;
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.animator-title-group,
+.animator-sync,
+.animator-transport-row,
+.animator-layers-header,
+.animator-layers-header > div {
+  display: flex;
+  align-items: center;
+}
+
+.animator-title-group {
+  gap: 11px;
+}
+
+.animator-title-group h1 {
+  margin: 0;
+  font-size: clamp(28px, 3vw, 44px);
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.animator-back {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  color: inherit;
+  font-size: 18px;
+  text-decoration: none;
+}
+
+.animator-subtitle,
+.animator-sync,
+.animator-stage-note,
+.animator-last-sync {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.045em;
+}
+
+.animator-sync {
+  gap: 10px;
+}
+
+.animator-sync button,
+.animator-tools button,
+.animator-layers button {
+  min-height: 34px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.animator-sync button,
+.animator-transport-row button,
+.animator-export > button,
+.animator-retry {
+  border: 1px solid rgba(23, 23, 19, 0.22);
+  padding: 0 10px;
+}
+
+.animator-tools,
+.animator-layers {
+  min-height: 0;
+}
+
+.animator-tools {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 28px;
+  padding-bottom: 26px;
+}
+
+.animator-tool-group {
+  display: grid;
+  gap: 6px;
+}
+
+.animator-label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.animator-mode {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 3px 8px;
+  width: 100%;
+  padding: 10px 8px;
+  text-align: left;
+  opacity: 0.44;
+}
+
+.animator-mode > span {
+  grid-row: 1 / 3;
+}
+
+.animator-mode strong {
+  font-size: 13px;
+}
+
+.animator-mode small {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.3;
+}
+
+.animator-mode--active {
+  background: rgba(255, 255, 255, 0.3);
+  opacity: 1;
+}
+
+.animator-transport-row {
+  align-items: stretch;
+  gap: 5px;
+}
+
+.animator-transport p,
+.animator-export p,
+.animator-layers-header p,
+.animator-empty {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.animator-export > button {
+  width: 100%;
+}
+
+.animator-error {
+  color: var(--ink) !important;
+}
+
+.animator-stage {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.animation-paper {
+  position: relative;
+  width: min(100%, calc((100vh - 150px) * 10 / 7));
+  aspect-ratio: 10 / 7;
+  overflow: hidden;
+  background: var(--paper);
+  box-shadow: 0 18px 55px rgba(23, 23, 19, 0.08);
+}
+
+.animation-paper canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.animator-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.animator-stage-note {
+  display: flex;
+  width: min(100%, calc((100vh - 150px) * 10 / 7));
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.animator-layers {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border-left: 1px solid rgba(23, 23, 19, 0.16);
+  padding-left: clamp(14px, 1.8vw, 26px);
+}
+
+.animator-layers-header {
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.animator-layers-header > div:last-child {
+  gap: 2px;
+}
+
+.animator-layers-header p {
+  margin: 0;
+}
+
+.animator-layers-header .animator-label {
+  margin-bottom: 2px;
+}
+
+.animator-layer-list {
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+.animator-layer-list li {
+  border-top: 1px solid rgba(23, 23, 19, 0.1);
+}
+
+.animator-layer-list label {
+  display: grid;
+  grid-template-columns: 13px 46px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-height: 52px;
+  cursor: pointer;
+}
+
+.animator-layer-list input {
+  width: 11px;
+  height: 11px;
+  margin: 0;
+  accent-color: var(--ink);
+}
+
+.animator-layer-list img {
+  display: block;
+  width: 46px;
+  height: 33px;
+  object-fit: contain;
+  background: var(--paper);
+}
+
+.animator-layer-list label > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.animator-layer-list strong,
+.animator-layer-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.animator-layer-list strong {
+  font-size: 10px;
+  letter-spacing: 0.035em;
+}
+
+.animator-layer-list small {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.animator-layer--hidden {
+  opacity: 0.3;
+}
+
+.animator-last-sync {
+  margin: 10px 0 0;
+}
+
+.animator-retry {
+  margin-bottom: 8px;
+}
+
+.animator-page button:disabled {
+  cursor: default;
+  opacity: 0.28;
+}
+
+.animator-page button:focus-visible,
+.animator-page a:focus-visible,
+.animator-layer-list input:focus-visible {
+  outline: 1px solid var(--ink);
+  outline-offset: 2px;
+}
+
 @keyframes appear {
   from {
     opacity: 0;
@@ -313,6 +622,69 @@ button {
 
   .gallery-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .animator-page {
+    position: fixed;
+    display: flex;
+    overflow-y: auto;
+    flex-direction: column;
+    gap: 24px;
+    padding: 18px;
+  }
+
+  .animator-header {
+    flex: 0 0 auto;
+  }
+
+  .animator-subtitle,
+  .animator-sync > span {
+    display: none;
+  }
+
+  .animator-tools {
+    flex: 0 0 auto;
+  }
+
+  .animator-tool-group {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .animator-tool-group > .animator-label {
+    grid-column: 1 / -1;
+  }
+
+  .animator-mode {
+    display: block;
+  }
+
+  .animator-mode > span,
+  .animator-mode small {
+    display: none;
+  }
+
+  .animator-transport,
+  .animator-export {
+    display: inline-block;
+    width: calc(50% - 4px);
+    vertical-align: top;
+  }
+
+  .animator-export {
+    margin-left: 4px;
+  }
+
+  .animation-paper,
+  .animator-stage-note {
+    width: 100%;
+  }
+
+  .animator-layers {
+    flex: 0 0 320px;
+    border-top: 1px solid rgba(23, 23, 19, 0.16);
+    border-left: 0;
+    padding-top: 18px;
+    padding-left: 0;
   }
 }
 

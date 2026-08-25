@@ -131,6 +131,35 @@ test("renders the saved drawing gallery", async () => {
   assert.match(html, /<title>Kept<\/title>/i);
   assert.match(html, />kept\.<\/h1>/i);
   assert.match(html, /download/i);
+  assert.match(html, /animate/i);
+});
+
+test("renders the 5A animation tool", async () => {
+  const worker = await loadWorker();
+  const response = await worker.fetch(
+    new Request("http://localhost/5A", { headers: { accept: "text/html" } }),
+    makeEnv(),
+    executionContext(),
+  );
+
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /<title>5A — Animation<\/title>/i);
+  assert.match(html, /animation tool/i);
+  assert.match(html, /blink/i);
+  assert.match(html, /solo/i);
+  assert.match(html, /grid/i);
+
+  const animator = await readFile(
+    new URL("../app/5A/Animator.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(animator, /const FRAME_MS = 300;/);
+  assert.match(animator, /const GRID_COLUMNS = 5;/);
+  assert.match(animator, /const GRID_ROWS = 10;/);
+  assert.match(animator, /const SYNC_INTERVAL_MS = 10_000;/);
+  assert.match(animator, /while \(cursor\)/);
+  assert.match(animator, /captureStream\(30\)/);
 });
 
 test("constructs canonical SVG on the server and writes it to D1", async () => {
