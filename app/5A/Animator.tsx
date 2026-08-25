@@ -231,6 +231,8 @@ export default function Animator() {
   const layerCacheRef = useRef<Map<string, Layer>>(new Map());
   const syncControllerRef = useRef<AbortController | null>(null);
   const syncingRef = useRef(false);
+  const previewUrlRef = useRef<string | null>(null);
+  const previewGenerationRef = useRef(0);
   const [layers, setLayers] = useState<Layer[]>([]);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<AnimationMode>("blink");
@@ -241,13 +243,24 @@ export default function Animator() {
   );
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [exportStatus, setExportStatus] = useState<
-    "idle" | "recording" | "error" | "unsupported"
+    "idle" | "encoding" | "error" | "unsupported"
   >("idle");
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   const visibleLayers = useMemo(
     () => layers.filter((layer) => !hidden.has(layer.id)),
     [hidden, layers],
   );
+
+  const discardExportPreview = useCallback(() => {
+    previewGenerationRef.current += 1;
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
+    setPreviewUrl(null);
+    setExportStatus("idle");
+  }, []);
 
   const sync = useCallback(async () => {
     if (syncingRef.current) return;
@@ -268,10 +281,14 @@ export default function Animator() {
         return layer;
       });
       const nextCache = new Map(nextLayers.map((layer) => [layer.id, layer]));
+      const layersChanged =
+        nextLayers.length !== currentCache.size ||
+        nextLayers.some((layer) => currentCache.get(layer.id) !== layer);
       for (const [id, layer] of currentCache) {
         if (nextCache.get(id) !== layer) releaseLayer(layer);
       }
       layerCacheRef.current = nextCache;
+      if (layersChanged) discardExportPreview();
       setLayers(nextLayers);
       setHidden((current) => {
         const next = new Set([...current].filter((id) => nextCache.has(id)));
@@ -289,10 +306,10 @@ export default function Animator() {
         syncingRef.current = false;
       }
     }
-  }, []);
+  }, [discardExportPreview]);
 
   useEffect(() => {
-    void sync();
+    const firstSync = window.setTimeout(() => void sync(), 0);
     const interval = window.setInterval(() => void sync(), SYNC_INTERVAL_MS);
     const syncWhenVisible = () => {
       if (document.visibilityState === "visible") void sync();
@@ -301,11 +318,14 @@ export default function Animator() {
     document.addEventListener("visibilitychange", syncWhenVisible);
 
     return () => {
+      window.clearTimeout(firstSync);
       window.clearInterval(interval);
       window.removeEventListener("focus", syncWhenVisible);
       document.removeEventListener("visibilitychange", syncWhenVisible);
       syncControllerRef.current?.abort();
       syncingRef.current = false;
+      previewGenerationRef.current += 1;
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
       for (const layer of layerCacheRef.current.values()) releaseLayer(layer);
       layerCacheRef.current.clear();
     };
@@ -328,12 +348,14 @@ export default function Animator() {
   }, [frame, mode, visibleLayers]);
 
   const changeMode = (nextMode: AnimationMode) => {
+    if (nextMode !== mode) discardExportPreview();
     setMode(nextMode);
     setFrame(0);
     setPlaying(true);
   };
 
   const toggleLayer = (id: string) => {
+    discardExportPreview();
     setHidden((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
@@ -344,24 +366,33 @@ export default function Animator() {
   };
 
   const showAll = () => {
+    discardExportPreview();
     setHidden(new Set());
     setFrame(0);
   };
 
   const hideAll = () => {
+    discardExportPreview();
     setHidden(new Set(layers.map((layer) => layer.id)));
     setFrame(0);
     setPlaying(false);
   };
 
-  const exportAnimation = async () => {
-    if (visibleLayers.length === 0 || exportStatus === "recording") return;
+  const previewAnimation = async () => {
+    if (visibleLayers.length === 0 || exportStatus === "encoding") return;
     if (typeof VideoEncoder === "undefined") {
       setExportStatus("unsupported");
       return;
     }
 
-    setExportStatus("recording");
+    const generation = previewGenerationRef.current + 1;
+    previewGenerationRef.current = generation;
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
+    setPreviewUrl(null);
+    setExportStatus("encoding");
     const exportCanvas = document.createElement("canvas");
     exportCanvas.width = WIDTH;
     exportCanvas.height = HEIGHT;
@@ -400,20 +431,28 @@ export default function Animator() {
       }
       await output.finalize();
       if (!target.buffer) throw new Error("empty export");
+      if (previewGenerationRef.current !== generation) return;
 
       const blob = new Blob([target.buffer], { type: "video/mp4" });
-      const href = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = href;
-      anchor.download = `5A-${mode}-${WIDTH}x${HEIGHT}.mp4`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.setTimeout(() => URL.revokeObjectURL(href), 0);
+      const url = URL.createObjectURL(blob);
+      previewUrlRef.current = url;
+      setPreviewUrl(url);
       setExportStatus("idle");
     } catch {
-      setExportStatus("error");
+      if (previewGenerationRef.current === generation) {
+        setExportStatus("error");
+      }
     }
+  };
+
+  const downloadPreview = () => {
+    if (!previewUrlRef.current) return;
+    const anchor = document.createElement("a");
+    anchor.href = previewUrlRef.current;
+    anchor.download = `5A-${mode}-${WIDTH}x${HEIGHT}.mp4`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
   };
 
   const cycleSeconds = (visibleLayers.length * FRAME_MS) / 1000;
@@ -491,17 +530,17 @@ export default function Animator() {
           <span className="animator-label">output</span>
           <button
             type="button"
-            disabled={visibleLayers.length === 0 || exportStatus === "recording"}
-            onClick={() => void exportAnimation()}
+            disabled={visibleLayers.length === 0 || exportStatus === "encoding"}
+            onClick={() => void previewAnimation()}
           >
-            {exportStatus === "recording" ? "encoding mp4…" : "export mp4"}
+            {exportStatus === "encoding" ? "encoding preview…" : "preview mp4"}
           </button>
           <p>A4 portrait · {WIDTH} × {HEIGHT} · white</p>
           {exportStatus === "unsupported" ? (
             <p className="animator-error">animation export isn’t supported here.</p>
           ) : null}
           {exportStatus === "error" ? (
-            <p className="animator-error">couldn’t export this loop.</p>
+            <p className="animator-error">couldn’t build this preview.</p>
           ) : null}
         </div>
       </section>
@@ -515,6 +554,32 @@ export default function Animator() {
             role="img"
             aria-label={`${mode} animation preview using ${visibleLayers.length} visible layers`}
           />
+          {previewUrl ? (
+            <div
+              className="animation-export-preview"
+              role="region"
+              aria-label="Encoded MP4 preview"
+            >
+              <video
+                src={previewUrl}
+                autoPlay
+                loop
+                muted
+                controls
+                playsInline
+                aria-label={`${mode} MP4 export preview`}
+              />
+              <div className="animation-export-actions">
+                <span>exact mp4 preview</span>
+                <button type="button" onClick={downloadPreview}>
+                  download mp4
+                </button>
+                <button type="button" onClick={discardExportPreview}>
+                  close
+                </button>
+              </div>
+            </div>
+          ) : null}
           {status === "ready" && layers.length === 0 ? (
             <p className="animator-empty">nothing kept yet.</p>
           ) : null}

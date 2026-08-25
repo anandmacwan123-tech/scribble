@@ -474,6 +474,52 @@ button {
   height: 100%;
 }
 
+.animation-export-preview {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  background: #fff;
+}
+
+.animation-export-preview video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: #fff;
+  object-fit: contain;
+}
+
+.animation-export-actions {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 3px 16px rgba(23, 23, 19, 0.12);
+}
+
+.animation-export-actions span {
+  padding: 0 5px;
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.045em;
+}
+
+.animation-export-actions button {
+  min-height: 30px;
+  border: 1px solid rgba(23, 23, 19, 0.22);
+  padding: 0 8px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
 .animator-empty {
   position: absolute;
   inset: 0;
@@ -591,7 +637,8 @@ button {
 
 .animator-page button:focus-visible,
 .animator-page a:focus-visible,
-.animator-layer-list input:focus-visible {
+.animator-layer-list input:focus-visible,
+.animation-export-preview video:focus-visible {
   outline: 1px solid var(--ink);
   outline-offset: 2px;
 }

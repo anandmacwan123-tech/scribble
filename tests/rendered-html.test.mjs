@@ -165,6 +165,10 @@ test("renders the 5A animation tool", async () => {
   assert.match(animator, /while \(cursor\)/);
   assert.match(animator, /new Mp4OutputFormat/);
   assert.match(animator, /type: "video\/mp4"/);
+  assert.match(animator, /preview mp4/i);
+  assert.match(animator, /<video/);
+  assert.match(animator, /downloadPreview/);
+  assert.match(animator, /URL\.createObjectURL\(blob\)/);
   assert.match(animator, /\.mp4`/);
 });
 
