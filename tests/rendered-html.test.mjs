@@ -199,6 +199,7 @@ test("renders the 5A animation tool", async () => {
   assert.match(html, /blink/i);
   assert.match(html, /solo/i);
   assert.match(html, /grid/i);
+  assert.match(html, /slice/i);
   assert.match(html, /speed/i);
 
   const animator = await readFile(
@@ -213,8 +214,14 @@ test("renders the 5A animation tool", async () => {
   assert.match(animator, /const ENCODE_WIDTH = EXPORT_WIDTH \+ \(EXPORT_WIDTH % 2\);/);
   assert.match(animator, /const BACKGROUND = "#FFFFFF";/);
   assert.match(animator, /const GREY = "#CCCCCC";/);
-  assert.match(animator, /const GRID_COLUMNS = 5;/);
-  assert.match(animator, /const GRID_ROWS = 10;/);
+  assert.match(animator, /{ mode: "slice", label: "slice v1" }/);
+  assert.match(animator, /{ mode: "slice-v2", label: "slice v2" }/);
+  assert.match(animator, /usesUploadedLayers/);
+  assert.match(animator, /buildMaskRects/);
+  assert.match(animator, /SLICE_COUNT/);
+  assert.match(animator, /useState<[^>]*SliceDirection[^>]*>\("horizontal"\)/);
+  assert.match(animator, /aria-label="Slice direction"/);
+  assert.match(animator, /changeSliceDirection/);
   assert.match(animator, /aria-label="Animation speed in milliseconds"/);
   assert.match(animator, /aria-label="Stroke width in pixels"/);
   assert.match(animator, /aria-label="Stroke colour picker"/);
@@ -223,12 +230,12 @@ test("renders the 5A animation tool", async () => {
   assert.match(animator, /MIN_STROKE_WIDTH\.toFixed\(2\)/);
   assert.match(animator, /MAX_STROKE_WIDTH\.toFixed\(2\)/);
   assert.match(animator, /styleSvgStroke/);
-  assert.match(animator, /aria-label="Grid opacity percentage"/);
-  assert.match(animator, /context\.globalAlpha = gridOpacity;/);
-  assert.match(animator, /context\.strokeStyle = GRID_COLOR;/);
+  assert.match(animator, /"slice opacity"/);
+  assert.match(animator, /context\.globalAlpha = dividerOpacity;/);
+  assert.match(animator, /context\.strokeStyle = DIVIDER_COLOR;/);
   assert.match(animator, /grid v2/i);
   assert.match(animator, /aria-label="Upload A4 images"/);
-  assert.match(animator, /mode === "grid-v2" \? uploadedLayers : visibleLayers/);
+  assert.match(animator, /usesUploadedLayers\(mode\)[\s\S]*?uploadedLayers[\s\S]*?: visibleLayers/);
   assert.match(animator, /containImageRect/);
   assert.match(animator, /speedMs \* 2/);
   assert.match(animator, /const SYNC_INTERVAL_MS = 10_000;/);
@@ -246,6 +253,17 @@ test("renders the 5A animation tool", async () => {
   assert.match(animator, /downloadPreview/);
   assert.match(animator, /URL\.createObjectURL\(blob\)/);
   assert.match(animator, /\.mp4`/);
+
+  const masks = await readFile(
+    new URL("../app/5A/masks.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(masks, /export const GRID_COLUMNS = 5;/);
+  assert.match(masks, /export const GRID_ROWS = 10;/);
+  assert.match(masks, /export const SLICE_COUNT = 50;/);
+  assert.match(masks, /sliceDirection: SliceDirection = "horizontal"/);
+  assert.match(masks, /sliceDirection === "vertical"/);
+  assert.match(masks, /x: 0,[\s\S]*?width,[\s\S]*?height: sliceHeight/);
 
   const css = await readFile(
     new URL("../app/globals.css", import.meta.url),

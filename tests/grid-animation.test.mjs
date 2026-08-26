@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildGridTimeline } from "../app/5A/grid.ts";
+import {
+  buildMaskRects,
+  MASK_REGION_COUNT,
+  SLICE_COUNT,
+} from "../app/5A/masks.ts";
 
 test("gives every grid cell an independent 300–600ms dwell", () => {
   const minimumDwellMs = 300;
@@ -53,4 +58,50 @@ test("uses the seed to produce a fresh grid pattern", () => {
     buildGridTimeline(layers, 3, 99, 450, 900),
     buildGridTimeline(layers, 3, 100, 450, 900),
   );
+});
+
+test("builds 50 full-width horizontal slice masks", () => {
+  const width = 595;
+  const height = 842;
+  const slices = buildMaskRects("slice", width, height);
+
+  assert.equal(SLICE_COUNT, 50);
+  assert.equal(slices.length, SLICE_COUNT);
+  assert.ok(
+    slices.every(
+      (slice) =>
+        slice.x === 0 &&
+        slice.width === width &&
+        slice.height === height / SLICE_COUNT,
+    ),
+  );
+  assert.equal(slices[0].y, 0);
+  assert.equal(
+    slices.at(-1).y + slices.at(-1).height,
+    height,
+  );
+});
+
+test("can switch Slice to 50 full-height vertical masks", () => {
+  const width = 595;
+  const height = 842;
+  const slices = buildMaskRects("slice", width, height, "vertical");
+
+  assert.equal(slices.length, SLICE_COUNT);
+  assert.ok(
+    slices.every(
+      (slice) =>
+        slice.y === 0 &&
+        slice.height === height &&
+        slice.width === width / SLICE_COUNT,
+    ),
+  );
+  assert.equal(slices[0].x, 0);
+  assert.equal(slices.at(-1).x + slices.at(-1).width, width);
+});
+
+test("keeps the grid and slice modes at 50 independently animated regions", () => {
+  assert.equal(MASK_REGION_COUNT, 50);
+  assert.equal(buildMaskRects("grid", 595, 842).length, 50);
+  assert.equal(buildMaskRects("slice", 595, 842).length, 50);
 });

@@ -4,6 +4,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { containImageRect } from "./fit";
 import { buildGridTimeline, type GridTimelineFrame } from "./grid";
 import {
+  buildMaskRects,
+  GRID_COLUMNS,
+  GRID_ROWS,
+  MASK_REGION_COUNT,
+  SLICE_COUNT,
+  type MaskKind,
+  type SliceDirection,
+} from "./masks";
+import {
   DEFAULT_STROKE_COLOR,
   DEFAULT_STROKE_WIDTH,
   MAX_STROKE_WIDTH,
@@ -13,7 +22,13 @@ import {
   styleSvgStroke,
 } from "./style";
 
-type AnimationMode = "blink" | "solo" | "grid" | "grid-v2";
+type AnimationMode =
+  | "blink"
+  | "solo"
+  | "grid"
+  | "grid-v2"
+  | "slice"
+  | "slice-v2";
 
 type Drawing = {
   id: string;
@@ -57,23 +72,39 @@ const ENCODE_HEIGHT = EXPORT_HEIGHT + (EXPORT_HEIGHT % 2);
 const DEFAULT_SPEED_MS = 300;
 const MIN_SPEED_MS = 50;
 const MAX_SPEED_MS = 5000;
-const GRID_COLUMNS = 5;
-const GRID_ROWS = 10;
-const GRID_CELLS = GRID_COLUMNS * GRID_ROWS;
 const SYNC_INTERVAL_MS = 10_000;
 const BACKGROUND = "#FFFFFF";
 const GREY = "#CCCCCC";
-const GRID_COLOR = "#171713";
+const DIVIDER_COLOR = "#171713";
 
 const EFFECTS: { mode: AnimationMode; label: string }[] = [
   { mode: "blink", label: "blink" },
   { mode: "solo", label: "solo" },
   { mode: "grid", label: "grid v1" },
   { mode: "grid-v2", label: "grid v2" },
+  { mode: "slice", label: "slice v1" },
+  { mode: "slice-v2", label: "slice v2" },
 ];
 
-function isGridMode(mode: AnimationMode) {
-  return mode === "grid" || mode === "grid-v2";
+function isMaskMode(mode: AnimationMode) {
+  return (
+    mode === "grid" ||
+    mode === "grid-v2" ||
+    mode === "slice" ||
+    mode === "slice-v2"
+  );
+}
+
+function isSliceMode(mode: AnimationMode) {
+  return mode === "slice" || mode === "slice-v2";
+}
+
+function usesUploadedLayers(mode: AnimationMode) {
+  return mode === "grid-v2" || mode === "slice-v2";
+}
+
+function maskKindForMode(mode: AnimationMode): MaskKind {
+  return isSliceMode(mode) ? "slice" : "grid";
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -239,8 +270,9 @@ function drawFrame(
   layers: AnimationLayer[],
   mode: AnimationMode,
   frame: number,
-  gridTimeline: GridTimelineFrame[],
-  gridOpacity: number,
+  maskTimeline: GridTimelineFrame[],
+  dividerOpacity: number,
+  sliceDirection: SliceDirection,
   renderWidth = WIDTH,
   renderHeight = HEIGHT,
 ) {
@@ -280,44 +312,62 @@ function drawFrame(
   } else if (mode === "solo") {
     drawLayer(layers[activeIndex]);
   } else {
-    const cellWidth = renderWidth / GRID_COLUMNS;
-    const cellHeight = renderHeight / GRID_ROWS;
-    const gridFrame =
-      gridTimeline.length > 0
-        ? gridTimeline[frame % gridTimeline.length].layerIndexes
+    const maskRects = buildMaskRects(
+      maskKindForMode(mode),
+      renderWidth,
+      renderHeight,
+      sliceDirection,
+    );
+    const maskFrame =
+      maskTimeline.length > 0
+        ? maskTimeline[frame % maskTimeline.length].layerIndexes
         : null;
-    for (let cell = 0; cell < GRID_CELLS; cell += 1) {
-      const column = cell % GRID_COLUMNS;
-      const row = Math.floor(cell / GRID_COLUMNS);
-      const layer = layers[gridFrame?.[cell] ?? cell % layers.length];
+    for (let region = 0; region < maskRects.length; region += 1) {
+      const rect = maskRects[region];
+      const layer = layers[maskFrame?.[region] ?? region % layers.length];
 
       context.save();
       context.beginPath();
-      context.rect(
-        column * cellWidth,
-        row * cellHeight,
-        cellWidth,
-        cellHeight,
-      );
+      context.rect(rect.x, rect.y, rect.width, rect.height);
       context.clip();
       drawLayer(layer);
       context.restore();
     }
 
     context.save();
-    context.globalAlpha = gridOpacity;
-    context.strokeStyle = GRID_COLOR;
+    context.globalAlpha = dividerOpacity;
+    context.strokeStyle = DIVIDER_COLOR;
     context.lineWidth = renderWidth / WIDTH;
     context.beginPath();
-    for (let column = 1; column < GRID_COLUMNS; column += 1) {
-      const x = column * cellWidth;
-      context.moveTo(x, 0);
-      context.lineTo(x, renderHeight);
-    }
-    for (let row = 1; row < GRID_ROWS; row += 1) {
-      const y = row * cellHeight;
-      context.moveTo(0, y);
-      context.lineTo(renderWidth, y);
+    if (isSliceMode(mode)) {
+      if (sliceDirection === "vertical") {
+        const sliceWidth = renderWidth / SLICE_COUNT;
+        for (let slice = 1; slice < SLICE_COUNT; slice += 1) {
+          const x = slice * sliceWidth;
+          context.moveTo(x, 0);
+          context.lineTo(x, renderHeight);
+        }
+      } else {
+        const sliceHeight = renderHeight / SLICE_COUNT;
+        for (let slice = 1; slice < SLICE_COUNT; slice += 1) {
+          const y = slice * sliceHeight;
+          context.moveTo(0, y);
+          context.lineTo(renderWidth, y);
+        }
+      }
+    } else {
+      const cellWidth = renderWidth / GRID_COLUMNS;
+      const cellHeight = renderHeight / GRID_ROWS;
+      for (let column = 1; column < GRID_COLUMNS; column += 1) {
+        const x = column * cellWidth;
+        context.moveTo(x, 0);
+        context.lineTo(x, renderHeight);
+      }
+      for (let row = 1; row < GRID_ROWS; row += 1) {
+        const y = row * cellHeight;
+        context.moveTo(0, y);
+        context.lineTo(renderWidth, y);
+      }
     }
     context.stroke();
     context.restore();
@@ -351,8 +401,10 @@ export default function Animator() {
   const [strokeColorInput, setStrokeColorInput] = useState(
     DEFAULT_STROKE_COLOR,
   );
-  const [gridOpacityPercent, setGridOpacityPercent] = useState(100);
-  const [gridSeed, setGridSeed] = useState(() => Date.now() >>> 0);
+  const [dividerOpacityPercent, setDividerOpacityPercent] = useState(100);
+  const [sliceDirection, setSliceDirection] =
+    useState<SliceDirection>("horizontal");
+  const [maskSeed, setMaskSeed] = useState(() => Date.now() >>> 0);
   const [playing, setPlaying] = useState(true);
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
@@ -369,7 +421,9 @@ export default function Animator() {
     () => layers.filter((layer) => !hidden.has(layer.id)),
     [hidden, layers],
   );
-  const animationLayers = mode === "grid-v2" ? uploadedLayers : visibleLayers;
+  const animationLayers = usesUploadedLayers(mode)
+    ? uploadedLayers
+    : visibleLayers;
   const parsedSpeed = Number(speedInput);
   const speedMs = normalizeSpeed(
     speedInput.trim() !== "" && Number.isFinite(parsedSpeed)
@@ -382,18 +436,18 @@ export default function Animator() {
       ? parsedStrokeWidth
       : DEFAULT_STROKE_WIDTH,
   );
-  const gridTimeline = useMemo(
+  const maskTimeline = useMemo(
     () =>
       buildGridTimeline(
         animationLayers.map(({ id }) => id),
-        GRID_CELLS,
-        gridSeed,
+        MASK_REGION_COUNT,
+        maskSeed,
         speedMs,
         speedMs * 2,
       ),
-    [animationLayers, gridSeed, speedMs],
+    [animationLayers, maskSeed, speedMs],
   );
-  const gridOpacity = gridOpacityPercent / 100;
+  const dividerOpacity = dividerOpacityPercent / 100;
 
   useEffect(() => {
     strokeColorRef.current = strokeColor;
@@ -553,15 +607,15 @@ export default function Animator() {
   useEffect(() => {
     if (!playing || animationLayers.length === 0) return;
     const delay =
-      isGridMode(mode)
-        ? (gridTimeline[frame % gridTimeline.length]?.durationMs ?? speedMs)
+      isMaskMode(mode)
+        ? (maskTimeline[frame % maskTimeline.length]?.durationMs ?? speedMs)
         : speedMs;
     const timeout = window.setTimeout(
       () => setFrame((current) => current + 1),
       delay,
     );
     return () => window.clearTimeout(timeout);
-  }, [animationLayers.length, frame, gridTimeline, mode, playing, speedMs]);
+  }, [animationLayers.length, frame, maskTimeline, mode, playing, speedMs]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -572,15 +626,23 @@ export default function Animator() {
       animationLayers,
       mode,
       frame,
-      gridTimeline,
-      gridOpacity,
+      maskTimeline,
+      dividerOpacity,
+      sliceDirection,
     );
-  }, [animationLayers, frame, gridOpacity, gridTimeline, mode]);
+  }, [
+    animationLayers,
+    dividerOpacity,
+    frame,
+    maskTimeline,
+    mode,
+    sliceDirection,
+  ]);
 
   const changeMode = (nextMode: AnimationMode) => {
-    if (nextMode !== mode || isGridMode(nextMode)) discardExportPreview();
-    if (isGridMode(nextMode)) {
-      setGridSeed((current) => (current + 0x9e3779b9) >>> 0);
+    if (nextMode !== mode || isMaskMode(nextMode)) discardExportPreview();
+    if (isMaskMode(nextMode)) {
+      setMaskSeed((current) => (current + 0x9e3779b9) >>> 0);
     }
     setMode(nextMode);
     setFrame(0);
@@ -612,9 +674,9 @@ export default function Animator() {
   };
 
   const restart = () => {
-    if (isGridMode(mode)) {
+    if (isMaskMode(mode)) {
       discardExportPreview();
-      setGridSeed((current) => (current + 0x9e3779b9) >>> 0);
+      setMaskSeed((current) => (current + 0x9e3779b9) >>> 0);
     }
     setFrame(0);
   };
@@ -648,10 +710,17 @@ export default function Animator() {
     }
   };
 
-  const changeGridOpacity = (value: number) => {
+  const changeDividerOpacity = (value: number) => {
     if (!Number.isFinite(value)) return;
     discardExportPreview();
-    setGridOpacityPercent(clamp(Math.round(value), 0, 100));
+    setDividerOpacityPercent(clamp(Math.round(value), 0, 100));
+  };
+
+  const changeSliceDirection = (direction: SliceDirection) => {
+    if (direction === sliceDirection) return;
+    discardExportPreview();
+    setSliceDirection(direction);
+    setFrame(0);
   };
 
   const addUploadedImages = async (files: FileList | null) => {
@@ -782,21 +851,22 @@ export default function Animator() {
       await output.start();
 
       const exportFrameCount =
-        isGridMode(mode) ? gridTimeline.length : animationLayers.length;
+        isMaskMode(mode) ? maskTimeline.length : animationLayers.length;
       let exportTimestamp = 0;
 
       for (let exportFrame = 0; exportFrame < exportFrameCount; exportFrame += 1) {
         const exportFrameSeconds =
-          isGridMode(mode)
-            ? gridTimeline[exportFrame].durationMs / 1000
+          isMaskMode(mode)
+            ? maskTimeline[exportFrame].durationMs / 1000
             : speedMs / 1000;
         drawFrame(
           context,
           animationLayers,
           mode,
           exportFrame,
-          gridTimeline,
-          gridOpacity,
+          maskTimeline,
+          dividerOpacity,
+          sliceDirection,
           EXPORT_WIDTH,
           EXPORT_HEIGHT,
         );
@@ -904,7 +974,7 @@ export default function Animator() {
               <span>ms</span>
             </span>
           </label>
-          {mode !== "grid-v2" ? (
+          {!usesUploadedLayers(mode) ? (
             <>
               <label className="animator-input-row">
                 <span className="animator-label">stroke width</span>
@@ -952,26 +1022,49 @@ export default function Animator() {
               </label>
             </>
           ) : null}
-          {isGridMode(mode) ? (
+          {isMaskMode(mode) ? (
             <label className="animator-input-row">
-              <span className="animator-label">grid opacity</span>
+              <span className="animator-label">
+                {isSliceMode(mode) ? "slice opacity" : "grid opacity"}
+              </span>
               <span className="animator-input-value">
                 <input
                   type="number"
                   min="0"
                   max="100"
                   step="5"
-                  value={gridOpacityPercent}
+                  value={dividerOpacityPercent}
                   onChange={(event) =>
-                    changeGridOpacity(event.currentTarget.valueAsNumber)
+                    changeDividerOpacity(event.currentTarget.valueAsNumber)
                   }
-                  aria-label="Grid opacity percentage"
+                  aria-label={`${isSliceMode(mode) ? "Slice" : "Grid"} opacity percentage`}
                 />
                 <span>%</span>
               </span>
             </label>
           ) : null}
-          {mode === "grid-v2" ? (
+          {isSliceMode(mode) ? (
+            <div className="animator-input-row">
+              <span className="animator-label">slice direction</span>
+              <div
+                className="animator-direction"
+                role="group"
+                aria-label="Slice direction"
+              >
+                {(["horizontal", "vertical"] as const).map((direction) => (
+                  <button
+                    type="button"
+                    aria-pressed={sliceDirection === direction}
+                    onClick={() => changeSliceDirection(direction)}
+                    key={direction}
+                  >
+                    {direction}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {usesUploadedLayers(mode) ? (
             <label className="animator-upload-row">
               <span className="animator-label">images</span>
               <span className="animator-upload-button">
@@ -1068,7 +1161,7 @@ export default function Animator() {
               </div>
             </div>
           ) : null}
-          {mode === "grid-v2" && uploadedLayers.length === 0 ? (
+          {usesUploadedLayers(mode) && uploadedLayers.length === 0 ? (
             <p className="animator-empty">choose images.</p>
           ) : status === "ready" && layers.length === 0 ? (
             <p className="animator-empty">nothing kept yet.</p>
@@ -1080,10 +1173,10 @@ export default function Animator() {
         <div className="animator-layers-header">
           <div>
             <span className="animator-label">
-              layers · {mode === "grid-v2" ? uploadedLayers.length : visibleLayers.length}
+              layers · {usesUploadedLayers(mode) ? uploadedLayers.length : visibleLayers.length}
             </span>
           </div>
-          {mode === "grid-v2" ? (
+          {usesUploadedLayers(mode) ? (
             <div>
               <button
                 type="button"
@@ -1116,7 +1209,7 @@ export default function Animator() {
         ) : null}
 
         <ol className="animator-layer-list">
-          {mode === "grid-v2"
+          {usesUploadedLayers(mode)
             ? uploadedLayers.map((layer, index) => (
                 <li key={layer.id}>
                   <div className="animator-uploaded-layer">
