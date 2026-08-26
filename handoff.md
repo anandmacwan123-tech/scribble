@@ -11,11 +11,11 @@ constraints that should be preserved when extending it.
 
 - Repository: `https://github.com/anandmacwan123-tech/scribble`
 - Continue from branch: `codex/5a-animation`
-- Current branch commit: `c185244ee2fdeba0fa86ec42ad31eca7f387c683`
+- Slice implementation commit: `e8c16b1`
 - Live module: `https://scribble.anandmacwan123.workers.dev/5A`
 - Cloudflare Worker: `scribble`
 - Current deployed version at the time of this handoff:
-  `22840c86-7657-458d-99eb-d1b08cc963ce`
+  `1868fd3e-43a1-46f4-998a-47aed5bed786`
 - Production D1 database: `scribble-db`
 - D1 binding: `DB`
 
@@ -442,7 +442,7 @@ WRANGLER_LOG_PATH=.wrangler/wrangler.log npm exec -- wrangler d1 execute scribbl
 ```
 
 Compare both the count and the full fingerprint, not only the count. At the last
-deployment check there were 33 drawings, and the complete pre/post fingerprint
+deployment check there were 35 drawings, and the complete pre/post fingerprint
 was identical. That count is historical context, not a permanent expectation;
 new submissions can arrive at any time.
 
@@ -613,6 +613,7 @@ eaff6ff Merge latest A4 canvas baseline
 3a6af39 Add uploaded-image grid animation
 f735ae9 Add animation stroke controls
 c185244 Double animation export resolution
+e8c16b1 Add directional Slice animations
 ```
 
 The merge at `eaff6ff` is significant: it brought the current portrait A4 home
