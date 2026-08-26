@@ -1,11 +1,11 @@
-# `/5A` animation module handoff
+# `/5A` animation and `/5E` crop-editor handoff
 
 Last updated: 26 August 2026
 
 This document is the working handoff for the animation module in Scribble. It
-describes the state that is currently deployed, how `/5A` relates to the drawing
+describes `/5A`, its `/5E` crop-library editor, how both relate to the drawing
 and gallery pages, where the data comes from, how each animation works, and the
-constraints that should be preserved when extending it.
+constraints that should be preserved when extending them.
 
 ## Start here
 
@@ -19,17 +19,24 @@ constraints that should be preserved when extending it.
 - Production D1 database: `scribble-db`
 - D1 binding: `DB`
 
+Feature status at this update: the `/5E` crop-library work is implemented and
+verified in the local working tree. Migration `0003` has been applied only to
+the local D1 database. It has not been pushed, applied to production D1, or
+deployed in this change unless a later commit/deployment record says otherwise.
+
 Important: do not start new animation work from `origin/main`. The complete
 animation module and the restored A4 drawing-page baseline are on
 `codex/5a-animation`. At the time of writing, `origin/main` points to `6015fcb`
 and does not contain the current `/5A` work. There is also a local `main` branch
 at `a0bb954`; it is not the deployed animation branch.
 
-The worktree was clean when this document was created, before adding this file.
+Always inspect `git status`, remote branch state, D1 migration state, and the live
+Worker version before continuing; the identifiers above are historical handoff
+context rather than a substitute for those checks.
 
 ## Product overview
 
-Scribble has three user-facing pages:
+Scribble has four user-facing pages:
 
 1. `/` is the A4 portrait drawing page. A visitor draws one or more marks on a
    595 × 842 SVG surface and submits the full sheet.
@@ -39,6 +46,10 @@ Scribble has three user-facing pages:
 3. `/5A` is the animation tool. It reads every stored submission as a separate
    layer and produces a live canvas animation and an MP4 preview/download. It
    does not save, update, or delete drawings.
+4. `/5E` is the crop editor for the animation library. It combines a large A4
+   editing canvas with a gallery of every kept drawing. It saves only optional
+   A4 crop metadata; it never rewrites an original SVG. It also accepts a
+   browser-local reference image overlay for visual alignment.
 
 The core relationship is:
 
@@ -54,9 +65,13 @@ Cloudflare Worker -> canonical A4 SVG -> D1 drawings table
                         /                  \
                        v                    v
                 /5 gallery              /5A animator
+                                              ^
+                                              | optional crop metadata
+                                              v
+                                         /5E editor
 ```
 
-`/5` and `/5A` do not share React state. They independently request the same API.
+`/5`, `/5A`, and `/5E` do not share React state. They independently request the same API.
 Selecting a drawing in `/5` does not control the layers in `/5A`; `/5A` always
 loads the complete saved library and maintains its own local visibility set.
 
@@ -88,6 +103,18 @@ adding one is a product decision and requires updating that test.
 - `app/5A/style.ts`
   - Validates and normalizes SVG stroke width and colour.
   - Rewrites every canonical SVG `stroke` and `stroke-width` attribute.
+- `app/5A/library.ts`
+  - Pure Default/5E library source-key and preview-URL helpers.
+  - Ensures crop revision/geometry changes invalidate only edited layers.
+- `app/5E/page.tsx`
+  - Route entry and metadata for the crop editor.
+- `app/5E/CropEditor.tsx`
+  - Paginated library loading, A4 direct manipulation, saving/resetting crops,
+    selection, keyboard/pointer controls, and local reference-image handling.
+- `app/5E/crop.ts`
+  - Pure A4 crop normalization, zoom, pan, equality, and rendering helpers.
+- `app/5E/crop-editor.module.css`
+  - Black editor chrome, responsive A4 work surface, and gallery layout.
 - `app/globals.css`
   - Animation styles begin at `.animator-page`.
   - The selectors are scoped so the black `/5A` UI does not recolour `/` or `/5`.
@@ -109,7 +136,8 @@ adding one is a product decision and requires updating that test.
 - `db/drawings.ts`
   - D1 reads and writes.
 - `db/schema.ts` and `migrations/`
-  - `drawings` table definition and its `(created_at DESC, id DESC)` index.
+  - Immutable `drawings`, its ordering index, and the sparse `drawing_crops`
+    table introduced by migration `0003_create_drawing_crops.sql`.
 - `wrangler.jsonc`
   - Worker, D1, rate-limit, asset, and observability configuration.
 
@@ -124,6 +152,10 @@ adding one is a product decision and requires updating that test.
   - A4 and non-A4 aspect-ratio preservation.
 - `tests/svg-style.test.mjs`
   - Stroke colour validation and two-decimal 0–10 px width clamping.
+- `tests/library-selection.test.mjs`
+  - Default/5E source-key identity, crop revisions, and preview routing.
+- `tests/crop-api.test.mjs`
+  - Crop metadata, validation, SVG viewBoxes, reset, and migration safety.
 
 ## Stored drawing model
 
@@ -157,6 +189,26 @@ intentional data-retention behaviour; do not casually change it to `DO UPDATE`.
 The backend no longer performs “five shape” detection. Any valid, sufficiently
 long mark can be kept even though the UI language calls submissions fives.
 
+Crop edits are deliberately sparse and separate:
+
+```text
+drawing_crops
+- drawing_id  TEXT PRIMARY KEY REFERENCES drawings(id) ON DELETE CASCADE
+- x, y        REAL NOT NULL
+- width       REAL NOT NULL
+- height      REAL NOT NULL
+- revision    INTEGER NOT NULL, fresh 53-bit token on every save
+- updated_at  INTEGER NOT NULL
+```
+
+Coordinates use canonical `595 × 842` space. The crop rectangle is locked to the
+A4 ratio. A missing row means the exact full-page original; reset deletes the
+row instead of storing an identity override. The Worker applies an edited crop
+by changing the trusted SVG root `viewBox`, while keeping its outer `595pt ×
+842pt` dimensions. This fills A4 without stretching the paths. `ON DELETE
+CASCADE` lets the existing gallery delete-all query remove crop rows without
+changing or pre-clearing the drawings table.
+
 ## API contract consumed by `/5A`
 
 `GET /api/drawings?limit=100&cursor=...` returns newest-first metadata:
@@ -171,6 +223,14 @@ long mark can be kept even though the UI language calls submissions fives.
     updatedAt: string;
     previewUrl: string;
     downloadUrl: string;
+    crop: null | {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      revision: number;
+      updatedAt: string;
+    };
   }>;
   nextCursor: string | null;
 }
@@ -180,10 +240,32 @@ The cursor is `created_at:id`. `/5A` follows every cursor until it has loaded th
 entire library. Do not replace this with a single request: the server caps a page
 at 100 entries.
 
-For each item, `/5A` fetches `previewUrl` with `cache: "no-store"` and adds
-`v=<updatedAt>` to the URL. The preview endpoint returns a canonical A4 SVG with
-a visually stable preview stroke. `/5A` then rewrites that trusted server SVG in
-memory for the selected animation stroke colour and width.
+For each item, `/5A` fetches `previewUrl` with `cache: "no-store"`. Default and
+uncropped 5E layers use an identity source key. A cropped 5E layer requests
+`previewUrl&crop=1` and uses a source key containing drawing timestamp, crop
+revision, and crop coordinates. The preview endpoint returns a canonical A4 SVG
+with a visually stable preview stroke. `/5A` then rewrites that trusted server
+SVG in memory for the selected animation stroke colour and width.
+
+Crop mutations use:
+
+- `GET /api/drawings/:id/crop` for one current override.
+- `PUT /api/drawings/:id/crop` with exact JSON `{x,y,width,height}`.
+- `DELETE /api/drawings/:id/crop` to restore identity.
+
+Both mutation methods require `If-Match: "<revision>"`; use `"0"` when the
+drawing has no crop row. Inserts use `ON CONFLICT DO NOTHING`, updates/deletes
+match the expected revision, and mutations return their row atomically with SQL
+`RETURNING`. A stale editor receives `412` plus the current crop. `/5E` preserves
+its draft, rebases the expected revision, and asks the user to save again rather
+than silently overwriting another tab's edit. Revisions are fresh safe-integer
+tokens, not row-local counters, so delete/recreate cannot reuse revision `1` and
+accidentally accept an old tab's write.
+
+Writes require same-origin requests, validate finite bounds/minimum size/A4
+ratio, and use the existing rate limiter with a per-drawing crop key. They never
+accept SVG or markup. Same-origin is CSRF protection, not user authentication;
+if `/5E` becomes owner-only tooling, add real access control deliberately.
 
 The list and SVG responses use `cache-control: no-store`. SVG responses are also
 sandboxed, same-origin, and generated by the Worker.
@@ -201,8 +283,9 @@ sandboxed, same-origin, and generated by the Worker.
 - A new synchronization aborts the previous request controller.
 - Drawings are fetched in all paginated batches.
 - SVG/image layers are loaded with concurrency 8.
-- The cache is keyed by drawing ID.
-- An unchanged `updatedAt` reuses the existing layer and object URLs.
+- The cache is keyed by drawing ID and compares a separate source key.
+- Default ignores crop-only changes. 5E includes crop revision and coordinates.
+- Uncropped 5E entries share the Default identity source and object URLs.
 - New or changed rows are fetched and rasterized.
 - Removed rows are released and removed from the hidden-layer set.
 - Every obsolete Blob URL is revoked.
@@ -210,6 +293,13 @@ sandboxed, same-origin, and generated by the Worker.
 
 This means a normal refresh and the automatic sync both account for new and
 removed submissions without touching existing D1 records.
+
+The library selector is retained in a ref so `sync()` stays stable. Do not add
+library state directly to its callback dependencies: the mount-effect cleanup
+also releases uploaded v2 images and every Blob URL. Changing libraries aborts
+an in-flight sync, resets the animation frame, invalidates MP4 output, and starts
+a guarded sync for the requested library. Hidden drawing IDs persist because the
+Default and 5E libraries always contain the same drawing IDs/order.
 
 The order in `/5A` is the API order: newest `created_at` first, then descending
 ID for timestamp ties. Labels such as `five 001` are positional and can change
@@ -224,8 +314,9 @@ when a newer drawing appears; they are not persistent names.
 - `/5A` UI chrome: pure black `#000000` with white text/controls.
 - Layer thumbnails have white backgrounds.
 - The CSS sizes the live paper responsively but never changes its ratio.
-- Every source image is drawn with `containImageRect()` and centred. It is never
-  stretched or cropped.
+- Every source remains an outer A4 image and is drawn with `containImageRect()`.
+  Default sources are centred unchanged; 5E sources may already expose a
+  server-applied A4-ratio viewBox crop. Neither case is stretched.
 
 Keep preview dimensions and export dimensions conceptually separate. Increasing
 export resolution should not enlarge the on-screen A4 paper. `ENCODE_WIDTH` and
@@ -239,7 +330,7 @@ export size. The fives themselves stay fully opaque in grid modes.
 
 ### Blink
 
-- Uses the stored SVG layer library.
+- Uses the selected Default or 5E stored-SVG library.
 - Draws every visible layer in solid `#CCCCCC` at 100% opacity.
 - Draws one active layer over them in the chosen stroke colour.
 - Advances one layer at a time.
@@ -251,14 +342,14 @@ The grey is not “black at 20% opacity.” It must remain the literal hex colou
 
 ### Solo
 
-- Uses the stored SVG layer library.
+- Uses the selected Default or 5E stored-SVG library.
 - Draws only one visible layer at a time on white.
 - There are no grey background layers.
 - Each frame lasts the user-entered speed value.
 
 ### Grid v1
 
-- Uses the stored SVG layer library and its current visibility selection.
+- Uses the selected Default or 5E stored-SVG library and its visibility selection.
 - Divides the A4 page into 5 columns × 10 rows (50 cells).
 - Every cell clips the same full-page layer at that cell boundary. The drawing is
   not resized or repositioned per cell; only a different layer is revealed.
@@ -294,7 +385,7 @@ change. It should not be implemented by putting blobs into the existing
 
 ### Slice v1
 
-- Uses the stored SVG layer library and its current visibility selection.
+- Uses the selected Default or 5E stored-SVG library and its visibility selection.
 - Divides the A4 page into 50 equal strips.
 - Direction is user-selectable: horizontal is the default, and vertical is the
   alternative.
@@ -323,9 +414,12 @@ change. It should not be implemented by putting blobs into the existing
   decimal places.
 - Stroke colour accepts only a six-digit hex value (`#RRGGBB`) and normalizes it
   to uppercase. Default/fallback is `#171713`.
+- The Default/5E library selector is shown for Blink, Solo, Grid v1, and Slice
+  v1. It is hidden for uploaded-image v2 modes and retains the last selection.
+- `edit crops` links to `/5E` without converting or clearing v2 uploads.
 - Stroke changes rebuild the black/colour and grey Blob-backed SVG images for
   every stored layer, concurrently, then release the previous URLs.
-- Stroke controls affect Blink, Solo, and Grid v1, including their exports.
+- Stroke controls affect Blink, Solo, Grid v1, and Slice v1, including exports.
 - Grid/slice divider opacity is shown only in the four masked modes. Its label
   follows the selected geometry.
 - Slice v1/v2 show a direction control. Changing direction resets the live frame
@@ -385,7 +479,7 @@ Current video settings:
 - Keyframe interval: 2 seconds
 - Fast start: in-memory
 - MIME type: `video/mp4`
-- Filename: `5A-<mode>-1190x1684.mp4`
+- Filename: `5A-<mode>-<default|edited|uploads>-1190x1684.mp4`
 
 Blink and Solo export one frame per active layer, each lasting `speedMs`. Grid
 and Slice export every frame of the generated timeline using the timeline's
@@ -427,13 +521,39 @@ the current portrait A4 coordinate system.
 The delete-all endpoint is the only existing feature that clears the library.
 Never use it during animation development or testing against production.
 
+### `/5E` crop editor
+
+- Loads every drawing with the same pagination and newest-first order.
+- Presents a large fixed white A4 editor (the `/` relationship) alongside a
+  selectable thumbnail collection (the `/5` relationship).
+- A draft crop is a pan/zoom window over the immutable canonical A4 source.
+- Zoom is 100–800%; pointer dragging and keyboard arrows pan within bounds.
+- Save performs one explicit PUT. Reset creates an unsaved full-page draft;
+  saving that draft uses DELETE so no identity crop row remains. Changing
+  selection keeps per-drawing drafts.
+- It refreshes every 10 seconds and on focus without stealing the selection.
+- Save pauses/aborts background synchronization so an older list snapshot cannot
+  replace the just-saved crop. Leaving with any unsaved draft prompts first.
+- A user may load one local image as an alignment reference, control its
+  visibility/opacity, replace it, or clear it. It uses aspect-preserving contain
+  plus multiply blending over the paper. Its object URL is revoked on
+  replace/unmount. It is never uploaded, persisted, or included in `/5A` output.
+- A drawing with no crop row—including every new submission—stays unchanged in
+  the 5E library until explicitly edited.
+
 ## Data-safety rules
 
-The animation module must remain read-only with respect to stored submissions.
-Normal `/5A` work should only call:
+`/5A` remains read-only with respect to stored submissions. Normal animation
+work should only call:
 
 - `GET /api/drawings`
 - `GET /api/drawings/:id.svg?preview=1`
+- `GET /api/drawings/:id.svg?preview=1&crop=1` when 5E is selected
+
+`/5E` is allowed to create/update/delete only `drawing_crops` rows through its
+dedicated endpoint. It must never update `drawings.svg`, drawing timestamps, or
+IDs. A production fingerprint of `drawings` therefore remains identical after
+crop editing and after deploying the additive migration.
 
 Before and after a production deployment, verify the exact D1 row fingerprint:
 
@@ -471,6 +591,7 @@ Useful routes:
 - `http://localhost:3000/`
 - `http://localhost:3000/5`
 - `http://localhost:3000/5A`
+- `http://localhost:3000/5E`
 
 The Vite config deliberately uses polling inside the Codex Seatbelt sandbox and
 keeps Wrangler/Miniflare state under `.wrangler/`.
@@ -485,8 +606,8 @@ npm run lint
 npm test
 ```
 
-`npm test` runs a production build first and then the Node test suites. At the
-time of this handoff, all 35 tests passed.
+`npm test` runs a production build first and then the Node test suites. Keep the
+crop API, crop math, and library-selection suites in that command.
 
 For visual verification, check at least:
 
@@ -503,6 +624,11 @@ For visual verification, check at least:
 - A generated MP4 preview plays before download.
 - The MP4 preview accessibility label reports `1190 by 1684`.
 - New saved entries appear after sync without reloading `/5A`.
+- Default and uncropped 5E output are visually identical.
+- A saved 5E crop fills A4 without squashing in Blink, Solo, Grid v1, Slice v1,
+  and the 2× MP4.
+- `/5E` crop positioning matches the 5E result shown in `/5A`.
+- Reference overlay opacity/visibility works but never appears in saved output.
 
 ## Git and deployment workflow
 
@@ -523,10 +649,15 @@ git commit -m "<focused message>"
 git push origin codex/5a-animation
 ```
 
-Then perform the D1 predeploy fingerprint, verify Wrangler, dry-run, and deploy:
+For this feature, apply the additive D1 migration before deploying Worker code;
+the new list query left-joins `drawing_crops`. The previous Worker safely ignores
+the extra table, whereas new Worker code cannot query it before it exists. Take
+the drawing fingerprint, apply migration `0003`, re-check the fingerprint, then
+verify Wrangler, dry-run, and deploy:
 
 ```bash
 WRANGLER_LOG_PATH=.wrangler/wrangler.log npm exec -- wrangler --version
+WRANGLER_LOG_PATH=.wrangler/wrangler.log npm exec -- wrangler d1 migrations apply scribble-db --remote
 WRANGLER_LOG_PATH=.wrangler/wrangler.log npm exec -- wrangler deploy --dry-run --strict --keep-vars
 WRANGLER_LOG_PATH=.wrangler/wrangler.log npm exec -- wrangler deploy --strict --keep-vars
 ```
@@ -568,6 +699,14 @@ The Worker has these production bindings:
 12. **Do not use the gallery delete-all control in production verification.**
 13. **Do not turn Slice into 50 resized thumbnails.** Every strip clips a
     full-page, aspect-preserved layer at its native A4 position.
+14. **Do not rewrite originals for a crop.** `drawing_crops` is sparse metadata;
+    absence is identity and `drawings.updated_at` must not change.
+15. **Do not cache 5E only by drawing timestamp.** Use revision plus coordinates
+    or rapid/multi-tab edits can reuse stale SVG layers.
+16. **Do not apply 5E crops to v2 uploads, `/`, `/5`, ZIP downloads, or canonical
+    default SVG responses.** Cropping is an explicit animation-library variant.
+17. **Do not persist the `/5E` reference image.** It is a local visual guide and
+    must never enter D1 or exported media.
 
 ## Extending the module safely
 
@@ -637,3 +776,6 @@ discarding the already-built `/5A` implementation.
 - Grid and slice opacity affect divider lines only.
 - Stroke controls apply to SVG fives only.
 - Existing saved data must survive every deploy.
+- Default and 5E are two views of the same IDs, not duplicated SVG libraries.
+- Missing 5E crops are exact identity/full-A4 fallbacks.
+- `/5E` reference images are browser-local alignment aids only.

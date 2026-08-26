@@ -4,6 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { containImageRect } from "./fit";
 import { buildGridTimeline, type GridTimelineFrame } from "./grid";
 import {
+  getLayerSourceKey,
+  getLibraryPreviewUrl,
+  type DrawingCrop,
+  type LibraryMode,
+} from "./library";
+import {
   buildMaskRects,
   GRID_COLUMNS,
   GRID_ROWS,
@@ -37,6 +43,7 @@ type Drawing = {
   createdAt: string;
   updatedAt: string;
   previewUrl: string;
+  crop: DrawingCrop | null;
 };
 
 type DrawingPage = {
@@ -45,6 +52,7 @@ type DrawingPage = {
 };
 
 type Layer = Drawing & {
+  sourceKey: string;
   sourceSvg: string;
   styleKey: string;
   image: HTMLImageElement;
@@ -76,6 +84,7 @@ const SYNC_INTERVAL_MS = 10_000;
 const BACKGROUND = "#FFFFFF";
 const GREY = "#CCCCCC";
 const DIVIDER_COLOR = "#171713";
+const EMPTY_ANIMATION_LAYERS: AnimationLayer[] = [];
 
 const EFFECTS: { mode: AnimationMode; label: string }[] = [
   { mode: "blink", label: "blink" },
@@ -115,10 +124,17 @@ function normalizeSpeed(value: number) {
   return clamp(Math.round(value), MIN_SPEED_MS, MAX_SPEED_MS);
 }
 
-function versionedPreview(drawing: Drawing) {
-  const url = new URL(drawing.previewUrl, window.location.origin);
-  url.searchParams.set("v", drawing.updatedAt);
-  return url.toString();
+function versionedPreview(
+  drawing: Drawing,
+  library: LibraryMode,
+  sourceKey: string,
+) {
+  return getLibraryPreviewUrl(
+    drawing,
+    library,
+    window.location.origin,
+    sourceKey,
+  );
 }
 
 async function loadAllDrawings(signal: AbortSignal) {
@@ -169,6 +185,7 @@ function getStyleKey(color: string, width: number) {
 async function createStyledLayer(
   drawing: Drawing,
   sourceSvg: string,
+  sourceKey: string,
   color: string,
   width: number,
   signal: AbortSignal,
@@ -189,6 +206,7 @@ async function createStyledLayer(
     ]);
     return {
       ...drawing,
+      sourceKey,
       sourceSvg,
       styleKey: getStyleKey(color, width),
       image,
@@ -207,15 +225,24 @@ async function loadLayer(
   signal: AbortSignal,
   color: string,
   width: number,
+  library: LibraryMode,
+  sourceKey: string,
 ) {
-  const response = await fetch(versionedPreview(drawing), {
+  const response = await fetch(versionedPreview(drawing, library, sourceKey), {
     cache: "no-store",
     signal,
   });
   if (!response.ok) throw new Error("image failed");
 
   const sourceSvg = await response.text();
-  return createStyledLayer(drawing, sourceSvg, color, width, signal);
+  return createStyledLayer(
+    drawing,
+    sourceSvg,
+    sourceKey,
+    color,
+    width,
+    signal,
+  );
 }
 
 function releaseLayer(layer: Layer) {
@@ -385,6 +412,7 @@ export default function Animator() {
   const styleControllerRef = useRef<AbortController | null>(null);
   const strokeColorRef = useRef(DEFAULT_STROKE_COLOR);
   const strokeWidthRef = useRef(DEFAULT_STROKE_WIDTH);
+  const libraryRef = useRef<LibraryMode>("default");
   const syncingRef = useRef(false);
   const previewUrlRef = useRef<string | null>(null);
   const previewGenerationRef = useRef(0);
@@ -392,6 +420,8 @@ export default function Animator() {
   const [uploadedLayers, setUploadedLayers] = useState<UploadedLayer[]>([]);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<AnimationMode>("blink");
+  const [library, setLibrary] = useState<LibraryMode>("default");
+  const [loadedLibrary, setLoadedLibrary] = useState<LibraryMode | null>(null);
   const [frame, setFrame] = useState(0);
   const [speedInput, setSpeedInput] = useState(String(DEFAULT_SPEED_MS));
   const [strokeWidthInput, setStrokeWidthInput] = useState(
@@ -423,7 +453,9 @@ export default function Animator() {
   );
   const animationLayers = usesUploadedLayers(mode)
     ? uploadedLayers
-    : visibleLayers;
+    : loadedLibrary === library
+      ? visibleLayers
+      : EMPTY_ANIMATION_LAYERS;
   const parsedSpeed = Number(speedInput);
   const speedMs = normalizeSpeed(
     speedInput.trim() !== "" && Number.isFinite(parsedSpeed)
@@ -471,22 +503,30 @@ export default function Animator() {
     const controller = new AbortController();
     syncControllerRef.current = controller;
     const createdLayers: Layer[] = [];
+    const targetLibrary = libraryRef.current;
 
     try {
       const drawings = await loadAllDrawings(controller.signal);
       const currentCache = layerCacheRef.current;
       const nextLayers = await mapWithConcurrency(drawings, 8, async (drawing) => {
         const cached = currentCache.get(drawing.id);
-        if (cached?.updatedAt === drawing.updatedAt) return cached;
+        const sourceKey = getLayerSourceKey(drawing, targetLibrary);
+        if (cached?.sourceKey === sourceKey) return cached;
         const layer = await loadLayer(
           drawing,
           controller.signal,
           strokeColorRef.current,
           strokeWidthRef.current,
+          targetLibrary,
+          sourceKey,
         );
         createdLayers.push(layer);
         return layer;
       });
+      if (controller.signal.aborted || targetLibrary !== libraryRef.current) {
+        for (const layer of createdLayers) releaseLayer(layer);
+        return;
+      }
       const nextCache = new Map(nextLayers.map((layer) => [layer.id, layer]));
       const layersChanged =
         nextLayers.length !== currentCache.size ||
@@ -497,6 +537,7 @@ export default function Animator() {
       layerCacheRef.current = nextCache;
       if (layersChanged) discardExportPreview();
       setLayers(nextLayers);
+      setLoadedLibrary(targetLibrary);
       setHidden((current) => {
         const next = new Set([...current].filter((id) => nextCache.has(id)));
         return next.size === current.size ? current : next;
@@ -559,6 +600,7 @@ export default function Animator() {
           styled: await createStyledLayer(
             layer,
             layer.sourceSvg,
+            layer.sourceKey,
             strokeColor,
             strokeWidth,
             controller.signal,
@@ -647,6 +689,19 @@ export default function Animator() {
     setMode(nextMode);
     setFrame(0);
     setPlaying(true);
+  };
+
+  const changeLibrary = (nextLibrary: LibraryMode) => {
+    if (nextLibrary === libraryRef.current) return;
+    libraryRef.current = nextLibrary;
+    setLibrary(nextLibrary);
+    setLoadedLibrary(null);
+    syncControllerRef.current?.abort();
+    syncingRef.current = false;
+    discardExportPreview();
+    setStatus("loading");
+    setFrame(0);
+    void sync();
   };
 
   const toggleLayer = (id: string) => {
@@ -915,7 +970,8 @@ export default function Animator() {
     if (!previewUrlRef.current) return;
     const anchor = document.createElement("a");
     anchor.href = previewUrlRef.current;
-    anchor.download = `5A-${mode}-${EXPORT_WIDTH}x${EXPORT_HEIGHT}.mp4`;
+    const libraryName = usesUploadedLayers(mode) ? "uploads" : library;
+    anchor.download = `5A-${mode}-${libraryName}-${EXPORT_WIDTH}x${EXPORT_HEIGHT}.mp4`;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
@@ -958,6 +1014,30 @@ export default function Animator() {
         </div>
 
         <div className="animator-settings">
+          {!usesUploadedLayers(mode) ? (
+            <div className="animator-input-row">
+              <div className="animator-library-heading">
+                <span className="animator-label">library</span>
+                <a href="/5E">edit crops</a>
+              </div>
+              <div
+                className="animator-direction"
+                role="group"
+                aria-label="Drawing library"
+              >
+                {(["default", "edited"] as const).map((option) => (
+                  <button
+                    type="button"
+                    aria-pressed={library === option}
+                    onClick={() => changeLibrary(option)}
+                    key={option}
+                  >
+                    {option === "default" ? "default" : "5E crops"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <label className="animator-input-row">
             <span className="animator-label">speed</span>
             <span className="animator-input-value">
@@ -1134,7 +1214,7 @@ export default function Animator() {
             width={WIDTH}
             height={HEIGHT}
             role="img"
-            aria-label={`${mode} animation preview using ${animationLayers.length} visible layers`}
+            aria-label={`${mode} animation preview using ${animationLayers.length} visible layers from the ${usesUploadedLayers(mode) ? "uploaded" : library} library`}
           />
           {previewUrl ? (
             <div

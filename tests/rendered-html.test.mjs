@@ -201,6 +201,9 @@ test("renders the 5A animation tool", async () => {
   assert.match(html, /grid/i);
   assert.match(html, /slice/i);
   assert.match(html, /speed/i);
+  assert.match(html, /library/i);
+  assert.match(html, /5E crops/i);
+  assert.match(html, /href="\/5E"/i);
 
   const animator = await readFile(
     new URL("../app/5A/Animator.tsx", import.meta.url),
@@ -240,6 +243,12 @@ test("renders the 5A animation tool", async () => {
   assert.match(animator, /speedMs \* 2/);
   assert.match(animator, /const SYNC_INTERVAL_MS = 10_000;/);
   assert.match(animator, /while \(cursor\)/);
+  assert.match(animator, /libraryRef/);
+  assert.match(animator, /loadedLibrary === library/);
+  assert.match(animator, /setLoadedLibrary\(null\)/);
+  assert.match(animator, /getLayerSourceKey/);
+  assert.match(animator, /targetLibrary !== libraryRef\.current/);
+  assert.match(animator, /!usesUploadedLayers\(mode\)/);
   assert.match(animator, /context\.drawImage\([\s\S]*?rect\.x,[\s\S]*?rect\.y,[\s\S]*?rect\.width,[\s\S]*?rect\.height,/);
   assert.doesNotMatch(animator, /DRAWING_SCALE|DRAWING_WIDTH|DRAWING_HEIGHT|layer\.width|layer\.height/);
   assert.match(animator, /new Mp4OutputFormat/);
@@ -272,6 +281,44 @@ test("renders the 5A animation tool", async () => {
   assert.match(css, /\.animation-paper\s*\{[\s\S]*?aspect-ratio:\s*595\s*\/\s*842;[\s\S]*?flex:\s*0\s+0\s+auto;/);
   assert.match(css, /\.animator-page\s*\{[\s\S]*?background:\s*#000;[\s\S]*?color:\s*#fff;/);
   assert.match(css, /\.animation-paper\s*\{[\s\S]*?background:\s*#fff;/);
+});
+
+test("renders the 5E crop editor and local reference controls", async () => {
+  const worker = await loadWorker();
+  const response = await worker.fetch(
+    new Request("http://localhost/5E", { headers: { accept: "text/html" } }),
+    makeEnv(),
+    executionContext(),
+  );
+
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /<title>5E — Crop editor<\/title>/i);
+  assert.match(html, />5E<\/h1>/i);
+  assert.match(html, /crop/i);
+  assert.match(html, /reference/i);
+  assert.match(html, /upload/i);
+  assert.match(html, /save/i);
+
+  const editor = await readFile(
+    new URL("../app/5E/CropEditor.tsx", import.meta.url),
+    "utf8",
+  );
+  const editorCss = await readFile(
+    new URL("../app/5E/crop-editor.module.css", import.meta.url),
+    "utf8",
+  );
+  assert.match(editor, /const SYNC_INTERVAL_MS = 10_000;/);
+  assert.match(editor, /while \(cursor\)/);
+  assert.match(editor, /savingRef\.current/);
+  assert.match(editor, /beforeunload/);
+  assert.match(editor, /method: reset \? "DELETE" : "PUT"/);
+  assert.match(editor, /accept="image\/\*"/);
+  assert.match(editor, /referenceOpacity/);
+  assert.match(editor, /URL\.revokeObjectURL\(reference\.url\)/);
+  assert.match(editorCss, /\.page\s*\{[\s\S]*?background:\s*#000;/);
+  assert.match(editorCss, /\.paper\s*\{[\s\S]*?aspect-ratio:\s*595\s*\/\s*842;[\s\S]*?background:\s*#fff;/);
+  assert.match(editorCss, /\.referenceImage\s*\{[\s\S]*?mix-blend-mode:\s*multiply;[\s\S]*?object-fit:\s*contain;/);
 });
 
 test("constructs canonical SVG on the server and writes it to D1", async () => {

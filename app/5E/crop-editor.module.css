@@ -1,0 +1,462 @@
+.page {
+  --line: rgba(255, 255, 255, 0.42);
+  --muted: rgba(255, 255, 255, 0.56);
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-areas:
+    "header header header"
+    "tools stage library";
+  grid-template-columns: minmax(150px, 185px) minmax(0, 1fr) minmax(210px, 250px);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: clamp(18px, 2.3vw, 36px);
+  padding: clamp(18px, 2.6vw, 40px);
+  overflow: hidden;
+  background: #000;
+  color: #fff;
+}
+
+.page button,
+.fileButton {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  padding: 0 10px;
+  background: #000;
+  color: #fff;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.page button:disabled {
+  cursor: default;
+  opacity: 0.28;
+}
+
+.page button:focus-visible,
+.page a:focus-visible,
+.page input:focus-visible,
+.paper:focus-visible,
+.fileButton:focus-within {
+  outline: 1px solid #fff;
+  outline-offset: 2px;
+}
+
+.header {
+  z-index: 3;
+  display: flex;
+  grid-area: header;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.titleGroup,
+.sync,
+.navigation,
+.actionRow,
+.referenceHeader,
+.libraryHeader {
+  display: flex;
+  align-items: center;
+}
+
+.titleGroup {
+  gap: 11px;
+}
+
+.titleGroup h1 {
+  margin: 0;
+  font-size: clamp(28px, 3vw, 44px);
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.back {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  color: inherit;
+  font-size: 18px;
+  text-decoration: none;
+}
+
+.sync {
+  gap: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.045em;
+}
+
+.sync button {
+  color: #fff;
+}
+
+.tools {
+  display: flex;
+  grid-area: tools;
+  min-height: 0;
+  flex-direction: column;
+  gap: 26px;
+  padding-bottom: 20px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.tools::-webkit-scrollbar {
+  display: none;
+}
+
+.controlGroup {
+  display: grid;
+  gap: 8px;
+}
+
+.label {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.navigation {
+  justify-content: space-between;
+  gap: 5px;
+}
+
+.navigation button {
+  width: 38px;
+  padding: 0;
+  font-size: 14px;
+}
+
+.navigation span {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.rangeHeader,
+.referenceHeader,
+.libraryHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rangeHeader output,
+.libraryHeader > span:last-child {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.range {
+  width: 100%;
+  margin: 4px 0;
+  accent-color: #fff;
+  cursor: pointer;
+}
+
+.range:disabled {
+  cursor: default;
+  opacity: 0.28;
+}
+
+.actionRow {
+  align-items: stretch;
+  gap: 5px;
+}
+
+.actionRow button {
+  flex: 1;
+}
+
+.primaryAction:not(:disabled) {
+  background: #fff;
+  color: #000;
+}
+
+.referenceHeader .textAction,
+.clearAction {
+  min-height: 24px;
+  border: 0;
+  padding: 0;
+  color: var(--muted);
+}
+
+.fileButton {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.fileButton input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.fileName {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clearAction {
+  justify-self: start;
+}
+
+.stage {
+  display: flex;
+  grid-area: stage;
+  min-width: 0;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.paper {
+  position: relative;
+  width: min(100%, calc((100vh - 150px) * 595 / 842));
+  width: min(100%, calc((100dvh - 150px) * 595 / 842));
+  min-height: 0;
+  aspect-ratio: 595 / 842;
+  border: 0;
+  padding: 0;
+  flex: 0 0 auto;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 0 0 1px #fff;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.paper:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.paper.dragging {
+  cursor: grabbing;
+}
+
+.sourceImage {
+  position: absolute;
+  z-index: 1;
+  display: block;
+  max-width: none;
+  background: #fff;
+  object-fit: fill;
+  pointer-events: none;
+  user-select: none;
+}
+
+.referenceImage {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  mix-blend-mode: multiply;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+}
+
+.empty {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  display: grid;
+  margin: 0;
+  place-items: center;
+  color: #000;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.library {
+  display: flex;
+  grid-area: library;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid rgba(255, 255, 255, 0.35);
+  padding-left: clamp(14px, 1.8vw, 26px);
+}
+
+.libraryHeader {
+  min-height: 34px;
+  margin-bottom: 10px;
+}
+
+.retry {
+  margin-bottom: 8px;
+}
+
+.list {
+  min-height: 0;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+.list li {
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.list button {
+  display: grid;
+  width: 100%;
+  min-height: 68px;
+  grid-template-columns: 38px minmax(0, 1fr) 8px;
+  gap: 9px;
+  align-items: center;
+  border: 0;
+  padding: 7px 6px;
+  text-align: left;
+}
+
+.list button.selectedItem {
+  box-shadow: inset 0 0 0 1px #fff;
+}
+
+.list img {
+  display: block;
+  width: 38px;
+  height: 54px;
+  background: #fff;
+  object-fit: contain;
+}
+
+.itemText {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.itemText strong,
+.itemText small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemText strong {
+  font-size: 10px;
+  letter-spacing: 0.035em;
+}
+
+.itemText small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.marker {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--line);
+}
+
+.editedMarker {
+  background: #fff;
+}
+
+.dirtyMarker {
+  border-color: #fff;
+  background: transparent;
+  transform: rotate(45deg);
+}
+
+@media (max-width: 760px) {
+  .page {
+    display: grid;
+    grid-template-areas:
+      "header"
+      "stage"
+      "tools"
+      "library";
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto minmax(260px, 42vh);
+    gap: 22px;
+    padding: 18px;
+    overflow-y: auto;
+  }
+
+  .stage {
+    min-height: min(66vh, 620px);
+  }
+
+  .paper {
+    width: min(100%, calc(66vh * 595 / 842));
+    width: min(100%, calc(66dvh * 595 / 842));
+  }
+
+  .tools {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px 14px;
+    overflow: visible;
+    padding-bottom: 0;
+  }
+
+  .controlGroup:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .library {
+    min-height: 260px;
+    border-top: 1px solid rgba(255, 255, 255, 0.35);
+    border-left: 0;
+    padding-top: 14px;
+    padding-left: 0;
+  }
+
+  .list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
+    gap: 0 8px;
+  }
+}
+
+@media (max-width: 420px) {
+  .sync span {
+    display: none;
+  }
+
+  .stage {
+    min-height: 56vh;
+  }
+
+  .paper {
+    width: min(100%, calc(56vh * 595 / 842));
+    width: min(100%, calc(56dvh * 595 / 842));
+  }
+
+  .tools {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .controlGroup:last-child {
+    grid-column: auto;
+  }
+}

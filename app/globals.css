@@ -569,6 +569,25 @@ button {
   margin: 0;
 }
 
+.animator-library-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.animator-library-heading a {
+  color: var(--muted);
+  font-size: 10px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.animator-library-heading a:hover,
+.animator-library-heading a:focus-visible {
+  color: var(--ink);
+}
+
 .animator-input-value {
   display: flex;
   align-items: center;
